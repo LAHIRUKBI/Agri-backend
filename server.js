@@ -5,7 +5,7 @@ require('dotenv').config();
 const connectDB = require('./src/config/database');
 const authRoutes = require('./src/routes/authRoutes');
 const adminRoutes = require('./src/routes/adminRoutes');
-// const rotationRoutes = require('./src/routes/rotationRoutes');
+const rotationRoutes = require('./src/routes/rotationRoutes');
 
 const app = express();
 
@@ -22,7 +22,7 @@ connectDB();
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
-// app.use('/api/rotation', rotationRoutes);
+app.use('/api/rotation', rotationRoutes);
 
 
 // 404 handler - This must come AFTER all other routes
