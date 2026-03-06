@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const bcrypt = require('bcryptjs');
 
 // Get user by ID
 exports.getUser = async (req, res) => {
@@ -49,7 +50,7 @@ exports.updateUser = async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to update this user' });
     }
 
-    // Fields that are allowed to be updated (Farm Information removed)
+    // Fields that are allowed to be updated (Additional Contact Information removed)
     const allowedUpdates = [
       'name',
       'email',
@@ -60,12 +61,7 @@ exports.updateUser = async (req, res) => {
       'city',
       'state',
       'country',
-      'zipCode',
-      'alternatePhone',
-      'emergencyContact',
-      'emergencyContactName',
-      'website',
-      'socialMedia'
+      'zipCode'
     ];
 
     // Filter the request body to only include allowed fields
@@ -92,6 +88,68 @@ exports.updateUser = async (req, res) => {
     console.error('Error in updateUser:', error);
     
     // Handle specific MongoDB errors
+    if (error.name === 'CastError') {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+    
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({ message: `${field} already exists` });
+    }
+    
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Update password
+exports.updatePassword = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { currentPassword, newPassword } = req.body;
+
+    // Validate inputs
+    if (!userId) {
+      return res.status(400).json({ message: 'User ID is required' });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current password and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+    }
+
+    // Check if the user is the same as the authenticated user
+    if (userId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to update this user' });
+    }
+
+    // Find user with password
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check current password
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Current password is incorrect' });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update password
+    user.password = hashedPassword;
+    await user.save();
+
+    res.status(200).json({ message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Error in updatePassword:', error);
+    
     if (error.name === 'CastError') {
       return res.status(400).json({ message: 'Invalid user ID format' });
     }
