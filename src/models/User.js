@@ -29,24 +29,13 @@ const UserSchema = new mongoose.Schema({
     enum: ['farmer', 'admin'], 
     default: 'farmer' 
   },
-  // Address Information
+  // Address Information only
   address: { type: String },
   addressLine2: { type: String },
   city: { type: String },
   state: { type: String },
   country: { type: String },
-  zipCode: { type: String },
-  
-  // Additional Contact Information
-  alternatePhone: { type: String },
-  emergencyContact: { type: String },
-  emergencyContactName: { type: String },
-  website: { type: String },
-  socialMedia: {
-    facebook: { type: String },
-    twitter: { type: String },
-    instagram: { type: String }
-  }
+  zipCode: { type: String }
 }, { timestamps: true });
 
 UserSchema.pre('validate', function(next) {
