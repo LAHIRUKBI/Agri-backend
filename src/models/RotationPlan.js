@@ -22,6 +22,18 @@ const rotationPlanSchema = new mongoose.Schema({
     cropName: String,
     reasons: [String]
   }],
+  // New Table 1: Current Soil Condition & Depletion Prediction
+  soilNutrientLevels: [{
+    nutrient: String,
+    level: String,
+    depletionPrediction: String
+  }],
+  // New Table 2: Required Nutrients
+  requiredNutrients: [{
+    nutrient: String,
+    recommendedSource: String,
+    amount: String
+  }],
   createdAt: { type: Date, default: Date.now }
 });
 
