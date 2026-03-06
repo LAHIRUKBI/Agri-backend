@@ -7,6 +7,7 @@ const authRoutes = require('./src/routes/authRoutes');
 const userRoutes = require('./src/routes/userRoutes');
 const adminRoutes = require('./src/routes/adminRoutes');
 const rotationRoutes = require('./src/routes/rotationRoutes');
+const guidanceRoutes = require('./src/routes/guidanceRoutes');
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/rotation', rotationRoutes);
+app.use('/api/guidance', guidanceRoutes);
 
 
 // 404 handler - This must come AFTER all other routes
