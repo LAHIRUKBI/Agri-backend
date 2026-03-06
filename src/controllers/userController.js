@@ -157,3 +157,45 @@ exports.updatePassword = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// Get all users (admin only)
+exports.getAllUsers = async (req, res) => {
+  try {
+    const users = await User.find({}).select('-password').sort({ createdAt: -1 });
+    
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      data: users
+    });
+  } catch (error) {
+    console.error('Error in getAllUsers:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching users',
+      error: error.message 
+    });
+  }
+};
+
+// Get only farmers (admin only)
+exports.getFarmers = async (req, res) => {
+  try {
+    const farmers = await User.find({ role: 'farmer' })
+      .select('-password')
+      .sort({ createdAt: -1 });
+    
+    res.status(200).json({
+      success: true,
+      count: farmers.length,
+      data: farmers
+    });
+  } catch (error) {
+    console.error('Error in getFarmers:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching farmers',
+      error: error.message 
+    });
+  }
+};
