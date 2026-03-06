@@ -1,5 +1,6 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const RotationPlan = require('../models/RotationPlan');
+const RotationRule = require('../models/RotationRule');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -126,5 +127,65 @@ exports.deletePlan = async (req, res) => {
   } catch (error) {
     console.error('Delete Plan Error:', error);
     res.status(500).json({ error: 'Failed to delete the rotation plan.' });
+  }
+};
+
+
+
+exports.fetchNewRules = async (req, res) => {
+  try {
+    const prompt = `
+      Search your agricultural knowledge base for 5 proven crop rotation rules suitable for tropical climates like Sri Lanka.
+      Respond strictly with a JSON array where each object has:
+      1. "ruleName": Name of the rotation pattern.
+      2. "description": A simple explanation of why it works.
+      3. "sequence": An array of crop types (e.g. ["Legumes", "Leafy Greens", "Root crops"]).
+      4. "source": The name of a reliable agricultural institution, university, or official internet source this is derived from.
+      Only output the raw JSON array. Do not include markdown formatting outside the JSON.
+    `;
+
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const result = await model.generateContent(prompt);
+    
+    // Parse the response
+    const rawText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+    const rules = JSON.parse(rawText);
+
+    const savedRules = [];
+    for (let rule of rules) {
+      const newRule = await RotationRule.create({
+        ruleName: rule.ruleName,
+        description: rule.description,
+        sequence: rule.sequence,
+        source: rule.source,
+        status: 'pending' // Keeps it in the review queue
+      });
+      savedRules.push(newRule);
+    }
+
+    res.status(200).json({ success: true, data: savedRules, message: "Successfully fetched new rules." });
+  } catch (error) {
+    console.error("Error fetching new rules from AI:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getPendingRules = async (req, res) => {
+  try {
+    const rules = await RotationRule.find({ status: 'pending' }).sort({ fetchedAt: -1 });
+    res.status(200).json({ success: true, data: rules });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.updateRuleStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body; // 'approved' or 'ignored'
+    const rule = await RotationRule.findByIdAndUpdate(id, { status }, { new: true });
+    res.status(200).json({ success: true, data: rule });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
