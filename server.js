@@ -8,6 +8,8 @@ const userRoutes = require('./src/routes/userRoutes');
 const adminRoutes = require('./src/routes/adminRoutes');
 const rotationRoutes = require('./src/routes/rotationRoutes');
 const guidanceRoutes = require('./src/routes/guidanceRoutes');
+const nutrientRoutes = require('./src/routes/nutrientRoutes');
+const startCronJobs = require('./src/utils/cronJobs');
 
 const app = express();
 
@@ -21,12 +23,16 @@ console.log(`✅ JWT_SECRET: ${process.env.JWT_SECRET ? '✓ Run' : '✗ Missing
 // Connect to database using the imported function
 connectDB();
 
+// Start the cron jobs
+startCronJobs();
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/rotation', rotationRoutes);
 app.use('/api/guidance', guidanceRoutes);
+app.use('/api/nutrients', nutrientRoutes);
 
 
 // 404 handler - This must come AFTER all other routes
