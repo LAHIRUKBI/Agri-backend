@@ -1,5 +1,6 @@
 // backend/src/controllers/nutrientController.js
 const SoilConfig = require('../models/SoilConfig');
+const { saveNutrientsToCSV } = require('../utils/csvUtils');
 
 // Get current configuration or create default if none exists
 exports.getSoilConfig = async (req, res) => {
@@ -29,10 +30,15 @@ exports.updateSoilConfig = async (req, res) => {
   try {
     const { phMin, phMax, nutrients } = req.body;
     let config = await SoilConfig.findOne();
+    
     config.phMin = phMin;
     config.phMax = phMax;
     config.nutrients = nutrients;
-    await config.save();
+    await config.save(); // Saves to MongoDB
+
+    // ---> NEW: Save to CSV dataset for your algorithms <---
+    saveNutrientsToCSV(config);
+
     res.status(200).json({ success: true, data: config });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -49,9 +55,11 @@ exports.deleteNutrient = async (req, res) => {
       return res.status(404).json({ success: false, message: "Configuration not found" });
     }
 
-    // Filter out the nutrient that matches the ID
     config.nutrients = config.nutrients.filter(nut => nut._id.toString() !== nutrientId);
     await config.save();
+
+    // ---> NEW: Update the CSV when a nutrient is deleted too <---
+    saveNutrientsToCSV(config);
 
     res.status(200).json({ success: true, data: config });
   } catch (error) {
