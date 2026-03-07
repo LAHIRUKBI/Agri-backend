@@ -1,0 +1,9 @@
+Name,Symbol,Type,Min_ppm,Max_ppm,Unit
+Nitrogen,N,main,10,60,ppm
+Phosphorus,P,main,15,30,ppm
+Potassium,K,main,100,150,ppm
+Calcium,Ca,secondary,1000,2000,ppm
+Magnesium,Mg,secondary,100,250,ppm
+Sulfur,S,secondary,10,50,ppm
+Test,T,main,20,40,ppm
+Target_pH_Min,6,Target_pH_Max,7
