@@ -118,44 +118,40 @@ exports.fetchNewRules = async (req, res) => {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
     
-    // Parse the response
     const rawText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
     const rules = JSON.parse(rawText);
 
-    const savedRules = [];
-    for (let rule of rules) {
-      const newRule = await RotationRule.create({
-        ruleName: rule.ruleName,
-        description: rule.description,
-        sequence: rule.sequence,
-        source: rule.source,
-        status: 'pending' // Keeps it in the review queue
-      });
-      savedRules.push(newRule);
-    }
+    const formattedRules = rules.map((rule, index) => ({
+      _id: `temp-${Date.now()}-${index}`,
+      ruleName: rule.ruleName,
+      description: rule.description,
+      sequence: rule.sequence,
+      source: rule.source,
+      fetchedAt: new Date().toISOString()
+    }));
 
-    res.status(200).json({ success: true, data: savedRules, message: "Successfully fetched new rules." });
+    res.status(200).json({ success: true, data: formattedRules, message: "Successfully fetched new rules." });
   } catch (error) {
     console.error("Error fetching new rules from AI:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-exports.getPendingRules = async (req, res) => {
-  try {
-    const rules = await RotationRule.find({ status: 'pending' }).sort({ fetchedAt: -1 });
-    res.status(200).json({ success: true, data: rules });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
 
-exports.updateRuleStatus = async (req, res) => {
+exports.saveApprovedRule = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { status } = req.body; // 'approved' or 'ignored'
-    const rule = await RotationRule.findByIdAndUpdate(id, { status }, { new: true });
-    res.status(200).json({ success: true, data: rule });
+    const { ruleName, description, sequence, source, fetchedAt } = req.body;
+    
+    const newRule = await RotationRule.create({
+      ruleName,
+      description,
+      sequence,
+      source,
+      fetchedAt,
+      status: 'approved'
+    });
+
+    res.status(201).json({ success: true, data: newRule });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
