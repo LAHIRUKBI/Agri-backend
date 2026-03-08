@@ -4,6 +4,9 @@ const RotationRule = require('../models/RotationRule');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args)); // Ensure node-fetch is installed, or use axios
+
+// The NEW Machine Learning Pipeline
 exports.getRotationPlan = async (req, res) => {
   try {
     const { targetCrop, currentMonth, previousCrops, language } = req.body;
@@ -16,65 +19,33 @@ exports.getRotationPlan = async (req, res) => {
       return res.status(400).json({ error: 'Please specify the crop you want to plant.' });
     }
 
-    const farmerHistory = previousCrops.map(crop => 
-      `- Crop: ${crop.cropName}, Grown during: ${crop.timePeriod}, Fertilizers used: ${crop.fertilizers}, Pesticides used: ${crop.pesticides}`
-    ).join('\n');
+    // Send data to the Python ML Server
+    const pythonResponse = await fetch('http://localhost:8000/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetCrop,
+        currentMonth,
+        previousCrops,
+        language
+      }),
+    });
 
-    const prompt = `
-      You are an expert agronomist AI for a Smart Agriculture Support System.
-      A farmer located in Homagama, Western Province, Sri Lanka wants to plant '${targetCrop}' in the current month of ${currentMonth}.
-      
-      They have previously grown the following crops in this plot:
-      ${farmerHistory}
+    // ---> NEW: Exact Error Tracking <---
+    if (!pythonResponse.ok) {
+      const errorText = await pythonResponse.text();
+      console.error("❌ Python API Error Details:", errorText);
+      throw new Error(`Machine Learning model rejected request: ${errorText}`);
+    }
 
-      Analyze the situation based on principles of crop rotation, nutrient balancing, pest cycle breaking, and local seasonality. 
-      Consider the residual effects of all multiple fertilizers and pesticides mentioned.
+    const parsedData = await pythonResponse.json();
 
-      IMPORTANT INSTRUCTIONS: 
-      1. Output MUST be in ${language}.
-      2. If the target crop is NOT suitable, you MUST provide at least 3 alternative crops.
-      3. Generate a soil condition table and a required nutrients table based on the history provided.
-      
-      Return ONLY a valid JSON object in this exact format, with no markdown formatting or extra text. Keep JSON keys exactly as English below, but translate all values to ${language}:
-      {
-        "soilCondition": {
-          "status": "Short summary of expected soil health",
-          "details": ["Specific observation 1", "Specific observation 2"]
-        },
-        "targetEvaluation": {
-          "isSuitable": true or false,
-          "feedback": ["Reason 1 why suitable or not", "Reason 2"]
-        },
-        "alternativeSuggestions": [
-          {
-            "cropName": "Name of highly recommended alternative crop",
-            "reasons": ["Reason 1", "Reason 2"]
-          }
-        ],
-        "soilNutrientLevels": [
-          {
-            "nutrient": "e.g., Nitrogen, Phosphorus",
-            "level": "e.g., Low, Medium, High",
-            "depletionPrediction": "Prediction on how fast it will deplete"
-          }
-        ],
-        "requiredNutrients": [
-          {
-            "nutrient": "e.g., Nitrogen",
-            "recommendedSource": "e.g., Urea, Compost, Legumes",
-            "amount": "e.g., High Amount, Moderate"
-          }
-        ]
-      }
-    `;
+    // Check if Python returned an internal logical error
+    if (parsedData.error) {
+       throw new Error(parsedData.error);
+    }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const result = await model.generateContent(prompt);
-    const aiResponseText = result.response.text();
-
-    const cleanedJson = aiResponseText.replace(/```json\n|\n```|```/g, '').trim();
-    const parsedData = JSON.parse(cleanedJson);
-
+    // Save the ML evaluation to MongoDB for history
     const newPlan = new RotationPlan({
       user: userId,
       targetCrop,
@@ -91,8 +62,8 @@ exports.getRotationPlan = async (req, res) => {
     res.status(200).json(parsedData);
 
   } catch (error) {
-    console.error('AI Error:', error);
-    res.status(500).json({ error: 'Failed to generate AI rotation plan. Please try again.' });
+    console.error("Rotation Plan Error:", error);
+    res.status(500).json({ error: error.message || 'Failed to generate ML rotation plan.' });
   }
 };
 
