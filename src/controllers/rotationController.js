@@ -1,12 +1,13 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const RotationPlan = require('../models/RotationPlan');
 const RotationRule = require('../models/RotationRule');
+const SoilConfig = require('../models/SoilConfig');
+const { calculateCurrentNutrients } = require('../../algorithms/nutrientCalculator');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args)); // Ensure node-fetch is installed, or use axios
 
-// The NEW Machine Learning Pipeline
+// The Machine Learning Pipeline
 exports.getRotationPlan = async (req, res) => {
   try {
     const { targetCrop, currentMonth, previousCrops, language } = req.body;
@@ -18,8 +19,14 @@ exports.getRotationPlan = async (req, res) => {
     if (!targetCrop) {
       return res.status(400).json({ error: 'Please specify the crop you want to plant.' });
     }
-
-    // Send data to the Python ML Server
+    // 1. Get Base Soil Config from DB
+    let baseConfig = await SoilConfig.findOne();
+    if (!baseConfig) {
+       baseConfig = { nutrients: [{symbol:'N', min:50}, {symbol:'P', min:20}, {symbol:'K', min:100}] };
+    }
+    // 2. Execute Algorithm
+    const calcResult = calculateCurrentNutrients(baseConfig, previousCrops);
+    // 3. Send to Python Server
     const pythonResponse = await fetch('http://localhost:8000/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -27,11 +34,13 @@ exports.getRotationPlan = async (req, res) => {
         targetCrop,
         currentMonth,
         previousCrops,
-        language
+        language,
+        calculatedNutrients: calcResult.current,
+        historyImpact: calcResult.historyImpact,
+        baselineNutrients: calcResult.baseline
       }),
     });
 
-    // ---> NEW: Exact Error Tracking <---
     if (!pythonResponse.ok) {
       const errorText = await pythonResponse.text();
       console.error("❌ Python API Error Details:", errorText);
@@ -40,12 +49,10 @@ exports.getRotationPlan = async (req, res) => {
 
     const parsedData = await pythonResponse.json();
 
-    // Check if Python returned an internal logical error
     if (parsedData.error) {
        throw new Error(parsedData.error);
     }
-
-    // Save the ML evaluation to MongoDB for history
+    // 4. Save Plan
     const newPlan = new RotationPlan({
       user: userId,
       targetCrop,
@@ -68,6 +75,7 @@ exports.getRotationPlan = async (req, res) => {
 };
 
 
+
 // Fetch all saved plans for the logged-in user
 exports.getSavedPlans = async (req, res) => {
   try {
@@ -81,13 +89,13 @@ exports.getSavedPlans = async (req, res) => {
   }
 };
 
+
+
 // Delete a specific plan
 exports.deletePlan = async (req, res) => {
   try {
     const planId = req.params.id;
     const userId = req.user.id;
-
-    // Ensure the plan belongs to the logged-in user before deleting
     const deletedPlan = await RotationPlan.findOneAndDelete({ _id: planId, user: userId });
     
     if (!deletedPlan) {
@@ -136,6 +144,7 @@ exports.fetchNewRules = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 
 
 exports.saveApprovedRule = async (req, res) => {
