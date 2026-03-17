@@ -1,11 +1,26 @@
 District,Month_Num,Crop_Name,Is_Suitable
-Anuradhapura,3,Green Gram,1
+Ratnapura,3,Eggplant,1
+Ratnapura,3,Okra,1
+Ratnapura,3,Chilli,1
+Ratnapura,3,Cucumber,1
+Ratnapura,3,Yard-long Bean,1
+Hambantota,3,Chili,1
+Hambantota,3,Tomato,1
+Hambantota,3,Eggplant,1
+Hambantota,3,Okra,1
+Hambantota,3,Bitter Gourd,1
 Anuradhapura,3,Chili,1
-Anuradhapura,3,Okra,1
-Anuradhapura,3,Onion,1
+Anuradhapura,3,Brinjal,1
 Anuradhapura,3,Tomato,1
-Badulla,3,Eggplant,1
-Badulla,3,Tomato,1
-Badulla,3,Chili,1
-Badulla,3,Bush Beans,1
-Badulla,3,Capsicum,1
+Anuradhapura,3,Okra,1
+Anuradhapura,3,Green Gram,1
+Mannar,3,Eggplant,1
+Mannar,3,Tomato,1
+Mannar,3,Chili,1
+Mannar,3,Okra,1
+Mannar,3,Red Onion,1
+Colombo,3,Eggplant,1
+Colombo,3,Okra,1
+Colombo,3,Green Chillies,1
+Colombo,3,Bitter Gourd,1
+Colombo,3,Snake Gourd,1

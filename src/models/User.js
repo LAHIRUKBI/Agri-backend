@@ -29,13 +29,23 @@ const UserSchema = new mongoose.Schema({
     enum: ['farmer', 'admin'], 
     default: 'farmer' 
   },
-  // Address Information only
   address: { type: String },
   addressLine2: { type: String },
   city: { type: String },
   state: { type: String },
   country: { type: String },
-  zipCode: { type: String }
+  zipCode: { type: String },
+  
+  // UPDATED: Added detailed tracking fields for the countdown
+  activeCultivations: [{
+    cropName: { type: String, required: true },
+    district: { type: String, required: true },
+    startDate: { type: Date, default: Date.now },
+    isTracking: { type: Boolean, default: false },
+    trackingStartDate: { type: Date },
+    currentStepIndex: { type: Number, default: 0 },
+    currentStepStartDate: { type: Date }
+  }]
 }, { timestamps: true });
 
 UserSchema.pre('validate', function(next) {
