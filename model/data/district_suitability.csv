@@ -1,41 +1,11 @@
 District,Month_Num,Crop_Name,Is_Suitable
-Jaffna,3,Chili,1
-Jaffna,3,Onion,1
-Jaffna,3,Groundnut,1
-Jaffna,3,Tomato,1
-Jaffna,3,Eggplant,1
-Anuradhapura,1,Chilli,1
-Anuradhapura,1,Onion (Red Onion),1
-Anuradhapura,1,Green Gram,1
-Anuradhapura,1,Eggplant,1
-Anuradhapura,1,Tomato,1
-Colombo,3,Eggplant,1
-Colombo,3,Okra,1
-Colombo,3,Green Chilli,1
-Colombo,3,Bitter Gourd,1
-Colombo,3,Long Beans,1
-Anuradhapura,4,Chilli,1
-Anuradhapura,4,Eggplant,1
-Anuradhapura,4,Tomato,1
-Anuradhapura,4,Bitter Gourd,1
-Anuradhapura,4,Mung Bean,1
-Vavuniya,3,Tomato,1
-Vavuniya,3,Eggplant,1
-Vavuniya,3,Chilli,1
-Vavuniya,3,Okra,1
-Vavuniya,3,Cowpea,1
-Kilinochchi,3,Tomato,1
-Kilinochchi,3,Chilli,1
-Kilinochchi,3,Eggplant,1
-Kilinochchi,3,Okra,1
-Kilinochchi,3,Cucumber,1
-Badulla,3,Beans,1
+Anuradhapura,3,Green Gram,1
+Anuradhapura,3,Chili,1
+Anuradhapura,3,Okra,1
+Anuradhapura,3,Onion,1
+Anuradhapura,3,Tomato,1
+Badulla,3,Eggplant,1
 Badulla,3,Tomato,1
-Badulla,3,Chilli,1
-Badulla,3,Carrot,1
-Badulla,3,Cabbage,1
-Nuwara Eliya,3,Cabbage,1
-Nuwara Eliya,3,Carrot,1
-Nuwara Eliya,3,Leek,1
-Nuwara Eliya,3,Potato,1
-Nuwara Eliya,3,Beetroot,1
+Badulla,3,Chili,1
+Badulla,3,Bush Beans,1
+Badulla,3,Capsicum,1
