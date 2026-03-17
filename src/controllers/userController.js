@@ -199,3 +199,137 @@ exports.getFarmers = async (req, res) => {
     });
   }
 };
+
+
+
+
+exports.addCropToProfile = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { cropName, district } = req.body;
+
+    if (userId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to update this user' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Store ONLY the crop reference and start date, NOT the steps
+    user.activeCultivations.push({
+      cropName,
+      district,
+      startDate: new Date()
+    });
+
+    await user.save();
+    res.status(200).json({ success: true, message: 'Crop added to profile successfully!' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+// Delete a specific crop from the user's profile
+exports.deleteCropFromProfile = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const cropId = req.params.cropId;
+    if (userId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to update this user' });
+    }
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    const initialLength = user.activeCultivations.length;
+    user.activeCultivations = user.activeCultivations.filter(
+      (crop) => crop._id.toString() !== cropId
+    );
+    if (user.activeCultivations.length === initialLength) {
+      return res.status(404).json({ message: 'Crop not found in profile' });
+    }
+    await user.save();
+    res.status(200).json({ 
+      success: true, 
+      message: 'Crop removed successfully!',
+      data: user 
+    });
+  } catch (error) {
+    console.error('Error deleting crop:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+// Start tracking a specific crop
+exports.startCropTracking = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const cropId = req.params.cropId;
+
+    if (userId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to update this user' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const cropIndex = user.activeCultivations.findIndex(c => c._id.toString() === cropId);
+    if (cropIndex === -1) {
+      return res.status(404).json({ message: 'Crop not found in profile' });
+    }
+
+    // Update tracking status AND initialize step timers
+    user.activeCultivations[cropIndex].isTracking = true;
+    user.activeCultivations[cropIndex].trackingStartDate = new Date();
+    user.activeCultivations[cropIndex].currentStepIndex = 0;
+    user.activeCultivations[cropIndex].currentStepStartDate = new Date();
+
+    await user.save();
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'Tracking started successfully!',
+      data: user 
+    });
+  } catch (error) {
+    console.error('Error starting crop tracking:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// NEW: Advance to the next cultivation step early
+exports.advanceCropStep = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const cropId = req.params.cropId;
+
+    if (userId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const cropIndex = user.activeCultivations.findIndex(c => c._id.toString() === cropId);
+    if (cropIndex === -1) {
+      return res.status(404).json({ message: 'Crop not found' });
+    }
+
+    // Increment step and reset the start timer for the new step
+    const currentCrop = user.activeCultivations[cropIndex];
+    currentCrop.currentStepIndex = (currentCrop.currentStepIndex || 0) + 1;
+    currentCrop.currentStepStartDate = new Date();
+
+    await user.save();
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'Advanced to next stage successfully!',
+      data: user 
+    });
+  } catch (error) {
+    console.error('Error advancing crop step:', error);
+    res.status(500).json({ message: error.message });
+  }
+};

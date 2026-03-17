@@ -5,6 +5,7 @@ from typing import Dict, Any
 import pandas as pd
 import pickle
 import os
+from fastapi.middleware.cors import CORSMiddleware
 
 from nutrient_manager import get_or_create_nutrients
 from data_generator import check_and_generate_data
@@ -14,6 +15,14 @@ from guidance_train import train_guidance_model
 
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Allows requests from your React frontend
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(CURRENT_DIR, "saved_models")
@@ -239,3 +248,30 @@ async def recommend_crops(req: GuidanceRequest):
             })
 
     return {"success": True, "data": recommendations}
+
+
+
+@app.get("/get_crop_steps/{crop_name}")
+async def get_crop_steps(crop_name: str):
+    """Dynamically fetches steps for a specific crop for the Tracking Profile."""
+    data_dir = os.path.join(CURRENT_DIR, "data")
+    steps_csv = os.path.join(data_dir, "cultivation_steps.csv")
+    
+    try:
+        steps_df = pd.read_csv(steps_csv).fillna("")
+        # Isolate steps just for this requested crop
+        crop_data = steps_df[steps_df['Crop_Name'].str.lower() == crop_name.lower()]
+        crop_steps_raw = crop_data.to_dict('records')
+        
+        formatted_steps = []
+        for raw in crop_steps_raw:
+            formatted_steps.append({
+                "stage": str(raw.get("Stage", "")),
+                "instructions": str(raw.get("Instructions", "")),
+                "estimatedDays": int(raw.get("Estimated_Days", 0)) if raw.get("Estimated_Days") else 0,
+                "alert": str(raw.get("Alert", ""))
+            })
+            
+        return {"success": True, "steps": formatted_steps}
+    except Exception as e:
+        return {"error": str(e)}
