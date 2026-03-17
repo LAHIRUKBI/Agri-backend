@@ -1,4 +1,3 @@
-# backend/model/guidance_data_generator.py
 import os
 import pandas as pd
 import json
@@ -9,6 +8,8 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(CURRENT_DIR, "data")
 SUITABILITY_CSV = os.path.join(DATA_DIR, "district_suitability.csv")
 STEPS_CSV = os.path.join(DATA_DIR, "cultivation_steps.csv")
+# NEW: Define the training dataset path
+STEPS_TRAINING_CSV = os.path.join(DATA_DIR, "cultivation_steps_training.csv")
 
 ROOT_DIR = os.path.dirname(CURRENT_DIR)
 load_dotenv(dotenv_path=os.path.join(ROOT_DIR, ".env"))
@@ -20,6 +21,9 @@ def initialize_guidance_csvs():
         pd.DataFrame(columns=["District", "Month_Num", "Crop_Name", "Is_Suitable"]).to_csv(SUITABILITY_CSV, index=False)
     if not os.path.exists(STEPS_CSV):
         pd.DataFrame(columns=["Crop_Name", "Stage", "Instructions", "Estimated_Days", "Alert"]).to_csv(STEPS_CSV, index=False)
+    # NEW: Initialize the training dataset
+    if not os.path.exists(STEPS_TRAINING_CSV):
+        pd.DataFrame(columns=["Crop_Name", "Stage", "Instructions", "Estimated_Days", "Alert"]).to_csv(STEPS_TRAINING_CSV, index=False)
 
 def month_to_num(month_str):
     months = {"january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6, 
@@ -55,7 +59,7 @@ def fetch_and_save_district_data(district, month_str):
         suitability_rows = [{"District": district, "Month_Num": month_num, "Crop_Name": crop, "Is_Suitable": 1} for crop in data["crops"]]
         pd.DataFrame(suitability_rows).to_csv(SUITABILITY_CSV, mode='a', header=False, index=False)
         
-        # 2. Save Steps Data (Only if crop doesn't already exist in steps CSV)
+        # 2. Process steps through the Training dataset first
         existing_steps = pd.read_csv(STEPS_CSV)
         new_steps = []
         for step in data["steps"]:
@@ -63,7 +67,9 @@ def fetch_and_save_district_data(district, month_str):
                 new_steps.append(step)
                 
         if new_steps:
-            pd.DataFrame(new_steps).to_csv(STEPS_CSV, mode='a', header=False, index=False)
+            df = pd.DataFrame(new_steps)
+            df.to_csv(STEPS_TRAINING_CSV, mode='a', header=False, index=False)
+            df.to_csv(STEPS_CSV, mode='a', header=False, index=False)
             
         print(f"✅ Data for {district} successfully fetched and saved to local datasets.")
         return True
@@ -72,7 +78,7 @@ def fetch_and_save_district_data(district, month_str):
         return False
 
 def fetch_and_save_crop_steps(crop_name):
-    """Fetches missing steps for a specific crop and saves them to the dataset."""
+    """Fetches missing steps, saves to training CSV, then imports to main CSV."""
     initialize_guidance_csvs()
     print(f"⚠️ Steps for '{crop_name}' are missing locally. Fetching from AI...")
     
@@ -91,9 +97,16 @@ def fetch_and_save_crop_steps(crop_name):
         raw_json = response.text.replace('```json', '').replace('```', '').strip()
         data = json.loads(raw_json)
         
-        # Save the new steps to the CSV
-        pd.DataFrame(data).to_csv(STEPS_CSV, mode='a', header=False, index=False)
-        print(f"✅ Steps for {crop_name} successfully fetched and saved to local dataset.")
+        df = pd.DataFrame(data)
+        
+        # Step 1: Save to Training CSV
+        df.to_csv(STEPS_TRAINING_CSV, mode='a', header=False, index=False)
+        print(f"✅ Steps for {crop_name} saved to TRAINING dataset.")
+        
+        # Step 2: Import to Main CSV
+        df.to_csv(STEPS_CSV, mode='a', header=False, index=False)
+        print(f"✅ Steps for {crop_name} imported to MAIN dataset.")
+        
         return True
     except Exception as e:
         print(f"❌ ERROR fetching steps for {crop_name}: {e}")
