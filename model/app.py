@@ -1,6 +1,7 @@
+# backend/model/app.py
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Dict
+from typing import Dict, Any
 import pandas as pd
 import pickle
 import os
@@ -8,6 +9,9 @@ import os
 from nutrient_manager import get_or_create_nutrients
 from data_generator import check_and_generate_data
 from train import train_models
+from guidance_data_generator import fetch_and_save_district_data, month_to_num, initialize_guidance_csvs, fetch_and_save_crop_steps
+from guidance_train import train_guidance_model
+
 
 app = FastAPI()
 
@@ -31,6 +35,11 @@ class RotationRequest(BaseModel):
     calculatedNutrients: Dict[str, float]
     historyImpact: Dict[str, float] 
     baselineNutrients: Dict[str, float] 
+
+
+class GuidanceRequest(BaseModel):
+    district: str
+    month: str
 
 @app.post("/predict")
 async def predict_rotation(req: RotationRequest):
@@ -82,19 +91,20 @@ async def predict_rotation(req: RotationRequest):
 
     required_nutrients = []
     
+    # 5. Formulate explicit Problems and Solutions
     def evaluate_nutrient(name, diff, req, current):
         if diff < -5:  
             required_nutrients.append({
                 "nutrient": name,
                 "amount": f"Add {abs(diff):.2f} ppm",
-                "recommendedSource": "Apply targeted fertilizer."
+                "recommendedSource": f"Problem: {name} is {abs(diff):.2f} ppm lower than required. Solution: Apply targeted {name.split(' ')[0]} fertilizer to compensate for the historical deficit."
             })
             return "Deficit"
         elif diff > 5:  
             required_nutrients.append({
                 "nutrient": name,
                 "amount": f"Reduce {diff:.2f} ppm",
-                "recommendedSource": "Avoid adding. Plant consuming crops."
+                "recommendedSource": f"Problem: {name} is {diff:.2f} ppm higher than required. Solution: Avoid adding {name.split(' ')[0]} based fertilizers. Consider planting a consuming crop."
             })
             return "Surplus"
         return "Stable"
@@ -104,15 +114,17 @@ async def predict_rotation(req: RotationRequest):
     status_k = evaluate_nutrient("Potassium (K)", diff_k, req_k, current_k)
 
     final_suitable = ml_is_suitable
+    # Force "Not Suitable" if the algorithm detects extreme deficit that ML missed
     if diff_n < -15 or diff_p < -15 or diff_k < -15:
         final_suitable = False
 
+    # 6. Construct Final Response Payload
     return {
         "targetEvaluation": {
             "isSuitable": final_suitable,
             "feedback": [
                 f"Nutrient evaluation complete for target: '{req.targetCrop}'.",
-                "Graph shows current levels vs required levels."
+                "Review the graphs and historical impact data below to see exact soil changes."
             ]
         },
         "baselineNutrients": [
@@ -145,3 +157,85 @@ async def predict_rotation(req: RotationRequest):
         ],
         "requiredNutrients": required_nutrients
     }
+
+
+@app.post("/recommend_crops")
+async def recommend_crops(req: GuidanceRequest):
+    initialize_guidance_csvs()
+    data_dir = os.path.join(CURRENT_DIR, "data")
+    suit_csv = os.path.join(data_dir, "district_suitability.csv")
+    steps_csv = os.path.join(data_dir, "cultivation_steps.csv")
+    
+    df = pd.read_csv(suit_csv)
+    
+    # 1. AI/Dataset Sync: Check if district & month exists in local dataset
+    month_val = month_to_num(req.month)
+    data_exists = not df.empty and len(df[(df['District'].str.lower() == req.district.lower()) & (df['Month_Num'] == month_val)]) > 0
+    
+    if not data_exists:
+        success = fetch_and_save_district_data(req.district, req.month)
+        if success:
+            train_guidance_model()
+            df = pd.read_csv(suit_csv)
+        else:
+            return {"error": "Failed to fetch data from AI."}
+            
+    # 2. ML Prediction
+    try:
+        with open(os.path.join(MODEL_DIR, "crop_recommender.pkl"), "rb") as f:
+            model = pickle.load(f)
+        with open(os.path.join(MODEL_DIR, "district_encoder.pkl"), "rb") as f:
+            dist_enc = pickle.load(f)
+        with open(os.path.join(MODEL_DIR, "crop_encoder.pkl"), "rb") as f:
+            crop_enc = pickle.load(f)
+    except FileNotFoundError:
+        train_guidance_model()
+        return {"error": "Training model for the first time. Please retry in 5 seconds."}
+
+    try:
+        encoded_district = dist_enc.transform([req.district])[0]
+    except ValueError:
+        return {"error": "District not recognized by ML model yet. Try fetching data again."}
+
+    suitable_crops = []
+    for crop in crop_enc.classes_:
+        encoded_crop = crop_enc.transform([crop])[0]
+        prediction = model.predict([[encoded_district, month_val, encoded_crop]])
+        if prediction[0] == 1:
+            suitable_crops.append(crop)
+
+    # 3. Retrieve Cultivation Steps & Trigger Missing Data AI
+    steps_df = pd.read_csv(steps_csv).fillna("")
+    recommendations = []
+    
+    for crop in suitable_crops:
+        # Isolate steps just for this crop
+        crop_data = steps_df[steps_df['Crop_Name'].str.lower() == crop.lower()]
+        crop_steps_raw = crop_data.to_dict('records')
+        
+        # --- THE MISSING STEPS TRIGGER ---
+        if not crop_steps_raw:
+            success = fetch_and_save_crop_steps(crop)
+            if success:
+                steps_df = pd.read_csv(steps_csv).fillna("")
+                crop_data = steps_df[steps_df['Crop_Name'].str.lower() == crop.lower()]
+                crop_steps_raw = crop_data.to_dict('records')
+        
+        # --- FIX: Map Python Keys to strictly match React & Mongoose Keys ---
+        formatted_steps = []
+        for raw in crop_steps_raw:
+            formatted_steps.append({
+                "stage": str(raw.get("Stage", "")),
+                "instructions": str(raw.get("Instructions", "")),
+                "estimatedDays": int(raw.get("Estimated_Days", 0)) if raw.get("Estimated_Days") else 0,
+                "alert": str(raw.get("Alert", ""))
+            })
+            
+        if formatted_steps:
+            recommendations.append({
+                "cropName": crop,
+                "reasoning": f"Based on historical agricultural data, {crop} is highly suitable for {req.district} in {req.month}.",
+                "steps": formatted_steps
+            })
+
+    return {"success": True, "data": recommendations}
