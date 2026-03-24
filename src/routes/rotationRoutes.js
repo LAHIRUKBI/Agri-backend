@@ -1,7 +1,7 @@
 // backend/src/routes/rotationRoutes.js
 const express = require('express');
 const router = express.Router();
-const { getRotationPlan, getSavedPlans, deletePlan,  fetchNewRules, saveApprovedRule } = require('../controllers/rotationController');
+const { getRotationPlan, getSavedPlans, deletePlan, saveApprovedRule } = require('../controllers/rotationController');
 const { getAllCrops } = require('../controllers/cropController');
 const authMiddleware = require('../middlewares/authMiddleware');
 
@@ -12,7 +12,5 @@ router.post('/plan', getRotationPlan);
 router.get('/crops', getAllCrops);
 router.get('/history', getSavedPlans);
 router.delete('/history/:id', deletePlan);
-router.post('/fetch-rules', fetchNewRules);
-router.post('/save-rule', saveApprovedRule);
 
 module.exports = router;

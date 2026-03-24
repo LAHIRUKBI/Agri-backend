@@ -1,6 +1,5 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const RotationPlan = require('../models/RotationPlan');
-const RotationRule = require('../models/RotationRule');
 const SoilConfig = require('../models/SoilConfig');
 const { calculateCurrentNutrients } = require('../../algorithms/nutrientCalculator');
 
@@ -106,62 +105,5 @@ exports.deletePlan = async (req, res) => {
   } catch (error) {
     console.error('Delete Plan Error:', error);
     res.status(500).json({ error: 'Failed to delete the rotation plan.' });
-  }
-};
-
-
-
-exports.fetchNewRules = async (req, res) => {
-  try {
-    const prompt = `
-      Search your agricultural knowledge base for 5 proven crop rotation rules suitable for tropical climates like Sri Lanka.
-      Respond strictly with a JSON array where each object has:
-      1. "ruleName": Name of the rotation pattern.
-      2. "description": A simple explanation of why it works.
-      3. "sequence": An array of crop types (e.g. ["Legumes", "Leafy Greens", "Root crops"]).
-      4. "source": The name of a reliable agricultural institution, university, or official internet source this is derived from.
-      Only output the raw JSON array. Do not include markdown formatting outside the JSON.
-    `;
-
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const result = await model.generateContent(prompt);
-    
-    const rawText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-    const rules = JSON.parse(rawText);
-
-    const formattedRules = rules.map((rule, index) => ({
-      _id: `temp-${Date.now()}-${index}`,
-      ruleName: rule.ruleName,
-      description: rule.description,
-      sequence: rule.sequence,
-      source: rule.source,
-      fetchedAt: new Date().toISOString()
-    }));
-
-    res.status(200).json({ success: true, data: formattedRules, message: "Successfully fetched new rules." });
-  } catch (error) {
-    console.error("Error fetching new rules from AI:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-
-
-exports.saveApprovedRule = async (req, res) => {
-  try {
-    const { ruleName, description, sequence, source, fetchedAt } = req.body;
-    
-    const newRule = await RotationRule.create({
-      ruleName,
-      description,
-      sequence,
-      source,
-      fetchedAt,
-      status: 'approved'
-    });
-
-    res.status(201).json({ success: true, data: newRule });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
   }
 };
