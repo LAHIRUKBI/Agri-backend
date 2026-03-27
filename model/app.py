@@ -7,6 +7,10 @@ import pickle
 import os
 from fastapi.middleware.cors import CORSMiddleware
 
+from google import genai
+from dotenv import load_dotenv
+load_dotenv()
+
 from nutrient_manager import get_or_create_nutrients
 from data_generator import check_and_generate_data
 from train import train_models
@@ -50,17 +54,36 @@ class GuidanceRequest(BaseModel):
     district: str
     month: str
 
+def get_ai_soil_remedy(crop_name, n_diff, p_diff, k_diff, language):
+    """Gemini හරහා පස සකසා ගැනීමට අවශ්‍ය පිළියම් ලබා දීම"""
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    prompt = f"""
+    The farmer wants to plant {crop_name}. Currently, the soil has the following nutrient differences compared to what is required:
+    Nitrogen difference: {n_diff:.2f} ppm
+    Phosphorus difference: {p_diff:.2f} ppm
+    Potassium difference: {k_diff:.2f} ppm
+    (Negative values mean a deficit, positive mean a surplus).
+    Provide a clear, brief, and practical agricultural recommendation on how to prepare the soil, what fertilizers to add, or what to avoid to fix this soil for the crop. Provide the answer in {language}.
+    """
+    try:
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"AI Error: {e}")
+        return "Please apply a balanced NPK fertilizer based on standard agricultural guidelines."
+    
+
+
 @app.post("/predict")
 async def predict_rotation(req: RotationRequest):
-    # 1. Dataset / AI Sync
+    # 1. get Target Crop Requirements
     target_requirements = get_or_create_nutrients(req.targetCrop)
     if not target_requirements:
         return {"error": "Failed to determine crop requirements from dataset."}
 
-    # 2. Model Training Check
+    # 2. Data Generation & Model Training Check
     new_data_generated = check_and_generate_data(req.targetCrop)
-    models_exist = os.path.exists(os.path.join(MODEL_DIR, "nutrient_model.pkl")) and \
-                   os.path.exists(os.path.join(MODEL_DIR, "suitability_model.pkl"))
+    models_exist = os.path.exists(os.path.join(MODEL_DIR, "suitability_model.pkl"))
 
     if new_data_generated or not models_exist:
         success = train_models()
@@ -68,28 +91,16 @@ async def predict_rotation(req: RotationRequest):
             return {"error": "The AI is currently generating the dataset. Please click Process again in 10 seconds."}
 
     try:
-        with open(os.path.join(MODEL_DIR, "nutrient_model.pkl"), "rb") as f:
-            nutrient_model = pickle.load(f)
         with open(os.path.join(MODEL_DIR, "suitability_model.pkl"), "rb") as f:
             suitability_model = pickle.load(f)
     except FileNotFoundError:
         return {"error": "Critical Error: Model files missing."}
 
-    # 3. Model Input Extraction
-    total_months = len(req.previousCrops) * 3
-    used_urea = 1 if any("urea" in c.fertilizers.lower() for c in req.previousCrops) else 0
-    used_compost = 1 if any("compost" in c.fertilizers.lower() for c in req.previousCrops) else 0
-    
-    input_features = pd.DataFrame([[total_months, used_urea, used_compost]], 
-                                  columns=["Prev_Months_Farmed", "Used_Urea", "Used_Compost"])
-
+    # 3
     current_n = req.calculatedNutrients.get('N', 0)
     current_p = req.calculatedNutrients.get('P', 0)
     current_k = req.calculatedNutrients.get('K', 0)
 
-    ml_is_suitable = bool(suitability_model.predict(input_features)[0])
-
-    # 4. Mathematical Comparison
     req_n = float(target_requirements["Min_Nitrogen_ppm"])
     req_p = float(target_requirements["Min_Phosphorus_ppm"])
     req_k = float(target_requirements["Min_Potassium_ppm"])
@@ -98,73 +109,45 @@ async def predict_rotation(req: RotationRequest):
     diff_p = current_p - req_p
     diff_k = current_k - req_k
 
+    # ML Model Prediction
+    input_features = pd.DataFrame([[current_n, current_p, current_k, req_n, req_p, req_k]], 
+                                  columns=["Current_N", "Current_P", "Current_K", "Req_N", "Req_P", "Req_K"])
+    
+    ml_is_suitable = bool(suitability_model.predict(input_features)[0])
+
     required_nutrients = []
     
-    # 5. Formulate explicit Problems and Solutions
-    def evaluate_nutrient(name, diff, req, current):
+    def evaluate_nutrient(name, diff):
         if diff < -5:  
-            required_nutrients.append({
-                "nutrient": name,
-                "amount": f"Add {abs(diff):.2f} ppm",
-                "recommendedSource": f"Problem: {name} is {abs(diff):.2f} ppm lower than required. Solution: Apply targeted {name.split(' ')[0]} fertilizer to compensate for the historical deficit."
-            })
             return "Deficit"
         elif diff > 5:  
-            required_nutrients.append({
-                "nutrient": name,
-                "amount": f"Reduce {diff:.2f} ppm",
-                "recommendedSource": f"Problem: {name} is {diff:.2f} ppm higher than required. Solution: Avoid adding {name.split(' ')[0]} based fertilizers. Consider planting a consuming crop."
-            })
             return "Surplus"
         return "Stable"
 
-    status_n = evaluate_nutrient("Nitrogen (N)", diff_n, req_n, current_n)
-    status_p = evaluate_nutrient("Phosphorus (P)", diff_p, req_p, current_p)
-    status_k = evaluate_nutrient("Potassium (K)", diff_k, req_k, current_k)
+    status_n = evaluate_nutrient("Nitrogen (N)", diff_n)
+    status_p = evaluate_nutrient("Phosphorus (P)", diff_p)
+    status_k = evaluate_nutrient("Potassium (K)", diff_k)
 
-    final_suitable = ml_is_suitable
-    # Force "Not Suitable" if the algorithm detects extreme deficit that ML missed
-    if diff_n < -15 or diff_p < -15 or diff_k < -15:
-        final_suitable = False
+    # 4. Generating remedies through AI if the soil is not suitable
+    ai_remedy_message = ""
+    if not ml_is_suitable:
+        ai_remedy_message = get_ai_soil_remedy(req.targetCrop, diff_n, diff_p, diff_k, req.language)
 
-    # 6. Construct Final Response Payload
+    # 5. Final Response
     return {
         "targetEvaluation": {
-            "isSuitable": final_suitable,
+            "isSuitable": ml_is_suitable,
             "feedback": [
                 f"Nutrient evaluation complete for target: '{req.targetCrop}'.",
                 "Review the graphs and historical impact data below to see exact soil changes."
-            ]
+            ],
+            "aiSoilRemedy": ai_remedy_message if not ml_is_suitable else "Soil is in perfect condition for this crop!"
         },
-        "baselineNutrients": [
-            {"nutrient": "Nitrogen (N)", "level": req.baselineNutrients.get('N', 0)},
-            {"nutrient": "Phosphorus (P)", "level": req.baselineNutrients.get('P', 0)},
-            {"nutrient": "Potassium (K)", "level": req.baselineNutrients.get('K', 0)}
-        ],
-        "historyImpact": [
-            {"nutrient": "Nitrogen (N)", "change": req.historyImpact.get('N', 0)},
-            {"nutrient": "Phosphorus (P)", "change": req.historyImpact.get('P', 0)},
-            {"nutrient": "Potassium (K)", "change": req.historyImpact.get('K', 0)}
-        ],
-        "soilCondition": {
-            "status": "Imbalanced Nutrients" if len(required_nutrients) > 0 else "Optimal Condition",
-            "details": ["Analyzed via hybrid Algorithm & ML pipeline."]
-        },
-        "alternativeSuggestions": [
-            {"cropName": "Legumes", "reasons": ["Improves soil nitrogen naturally."]},
-            {"cropName": "Sweet Potato", "reasons": ["High tolerance to varying soil nutrients."]}
-        ] if not final_suitable else [],
-        "graphData": [
-            {"name": "Nitrogen (N)", "Current": current_n, "Required": req_n},
-            {"name": "Phosphorus (P)", "Current": current_p, "Required": req_p},
-            {"name": "Potassium (K)", "Current": current_k, "Required": req_k}
-        ],
         "soilNutrientLevels": [
-            {"nutrient": "Nitrogen (N)", "level": f"{current_n} ppm", "depletionPrediction": status_n},
-            {"nutrient": "Phosphorus (P)", "level": f"{current_p} ppm", "depletionPrediction": status_p},
-            {"nutrient": "Potassium (K)", "level": f"{current_k} ppm", "depletionPrediction": status_k}
-        ],
-        "requiredNutrients": required_nutrients
+            {"nutrient": "Nitrogen (N)", "level": f"{current_n} ppm", "depletionPrediction": status_n, "difference": round(diff_n, 2)},
+            {"nutrient": "Phosphorus (P)", "level": f"{current_p} ppm", "depletionPrediction": status_p, "difference": round(diff_p, 2)},
+            {"nutrient": "Potassium (K)", "level": f"{current_k} ppm", "depletionPrediction": status_k, "difference": round(diff_k, 2)}
+        ]
     }
 
 
@@ -230,7 +213,7 @@ async def recommend_crops(req: GuidanceRequest):
                 crop_data = steps_df[steps_df['Crop_Name'].str.lower() == crop.lower()]
                 crop_steps_raw = crop_data.to_dict('records')
         
-        # --- FIX: Map Python Keys to strictly match React & Mongoose Keys ---
+        # --- Map Python Keys to strictly match React & Mongoose Keys ---
         formatted_steps = []
         for raw in crop_steps_raw:
             formatted_steps.append({
