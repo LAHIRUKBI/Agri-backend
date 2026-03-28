@@ -6,10 +6,9 @@ import pandas as pd
 import pickle
 import os
 from fastapi.middleware.cors import CORSMiddleware
-
 from google import genai
 from dotenv import load_dotenv
-load_dotenv()
+
 
 from nutrient_manager import get_or_create_nutrients
 from data_generator import check_and_generate_data
@@ -17,7 +16,7 @@ from train import train_models
 from guidance_data_generator import fetch_and_save_district_data, month_to_num, initialize_guidance_csvs, fetch_and_save_crop_steps
 from guidance_train import train_guidance_model
 
-
+load_dotenv()
 app = FastAPI()
 
 app.add_middleware(
@@ -30,6 +29,23 @@ app.add_middleware(
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(CURRENT_DIR, "saved_models")
+
+# Global Variable to hold the model in memory
+suitability_model = None
+
+def load_suitability_model():
+    global suitability_model
+    model_path = os.path.join(MODEL_DIR, "suitability_model.pkl")
+    if os.path.exists(model_path):
+        try:
+            with open(model_path, "rb") as f:
+                suitability_model = pickle.load(f)
+            print("✅ Suitability ML Model loaded into memory.")
+        except Exception as e:
+            print(f"❌ Error loading model: {e}")
+
+# Load model on server startup
+load_suitability_model()
 
 class CropHistory(BaseModel):
     cropName: str
@@ -76,7 +92,9 @@ def get_ai_soil_remedy(crop_name, n_diff, p_diff, k_diff, language):
 
 @app.post("/predict")
 async def predict_rotation(req: RotationRequest):
-    # 1. get Target Crop Requirements
+    global suitability_model
+
+    # 1. Get Target Crop Requirements
     target_requirements = get_or_create_nutrients(req.targetCrop)
     if not target_requirements:
         return {"error": "Failed to determine crop requirements from dataset."}
@@ -85,42 +103,42 @@ async def predict_rotation(req: RotationRequest):
     new_data_generated = check_and_generate_data(req.targetCrop)
     models_exist = os.path.exists(os.path.join(MODEL_DIR, "suitability_model.pkl"))
 
-    if new_data_generated or not models_exist:
+    if new_data_generated or not models_exist or suitability_model is None:
         success = train_models()
         if not success:
-            return {"error": "The AI is currently generating the dataset. Please click Process again in 10 seconds."}
+            return {"error": "The AI is currently generating the dataset or preparing the model. Please click Process again in 10 seconds."}
+        # Reload model into memory after successful training
+        load_suitability_model()
+
+    if suitability_model is None:
+        return {"error": "Critical Error: Model could not be loaded into memory."}
+
+    # 3. Process the nutrients
+    current_n = float(req.calculatedNutrients.get('N', 0))
+    current_p = float(req.calculatedNutrients.get('P', 0))
+    current_k = float(req.calculatedNutrients.get('K', 0))
 
     try:
-        with open(os.path.join(MODEL_DIR, "suitability_model.pkl"), "rb") as f:
-            suitability_model = pickle.load(f)
-    except FileNotFoundError:
-        return {"error": "Critical Error: Model files missing."}
-
-    # 3
-    current_n = req.calculatedNutrients.get('N', 0)
-    current_p = req.calculatedNutrients.get('P', 0)
-    current_k = req.calculatedNutrients.get('K', 0)
-
-    req_n = float(target_requirements["Min_Nitrogen_ppm"])
-    req_p = float(target_requirements["Min_Phosphorus_ppm"])
-    req_k = float(target_requirements["Min_Potassium_ppm"])
+        req_n = float(target_requirements["Min_Nitrogen_ppm"])
+        req_p = float(target_requirements["Min_Phosphorus_ppm"])
+        req_k = float(target_requirements["Min_Potassium_ppm"])
+    except ValueError:
+        return {"error": "Invalid nutrient requirement data retrieved."}
 
     diff_n = current_n - req_n
     diff_p = current_p - req_p
     diff_k = current_k - req_k
 
-    # ML Model Prediction
+    # ML Model Prediction using the in-memory model
     input_features = pd.DataFrame([[current_n, current_p, current_k, req_n, req_p, req_k]], 
                                   columns=["Current_N", "Current_P", "Current_K", "Req_N", "Req_P", "Req_K"])
     
     ml_is_suitable = bool(suitability_model.predict(input_features)[0])
 
-    required_nutrients = []
-    
     def evaluate_nutrient(name, diff):
-        if diff < -5:  
+        if diff < -5.0:  
             return "Deficit"
-        elif diff > 5:  
+        elif diff > 5.0:  
             return "Surplus"
         return "Stable"
 
@@ -132,6 +150,9 @@ async def predict_rotation(req: RotationRequest):
     ai_remedy_message = ""
     if not ml_is_suitable:
         ai_remedy_message = get_ai_soil_remedy(req.targetCrop, diff_n, diff_p, diff_k, req.language)
+    else:
+        # It's good practice to still give a slight maintenance prompt even if suitable
+        ai_remedy_message = "Soil is well-suited for this crop! Maintain current nutrient levels with standard agricultural practices."
 
     # 5. Final Response
     return {
@@ -141,7 +162,7 @@ async def predict_rotation(req: RotationRequest):
                 f"Nutrient evaluation complete for target: '{req.targetCrop}'.",
                 "Review the graphs and historical impact data below to see exact soil changes."
             ],
-            "aiSoilRemedy": ai_remedy_message if not ml_is_suitable else "Soil is in perfect condition for this crop!"
+            "aiSoilRemedy": ai_remedy_message
         },
         "soilNutrientLevels": [
             {"nutrient": "Nitrogen (N)", "level": f"{current_n} ppm", "depletionPrediction": status_n, "difference": round(diff_n, 2)},
