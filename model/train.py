@@ -17,22 +17,30 @@ def train_models():
     try:
         df = pd.read_csv(ML_DATASET_PATH)
         
+        # CRITICAL: Clean data to ensure all features are floats/ints. 
+        # This prevents crashes if Gemini hallucinates strings into the CSV.
+        numeric_cols = ["Current_N", "Current_P", "Current_K", "Req_N", "Req_P", "Req_K", "Is_Suitable"]
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+        df = df.dropna(subset=numeric_cols) # Drop any rows that couldn't be converted to numbers
+        
         if len(df) < 5:
-            print("❌ Cannot train: Not enough data.")
+            print("❌ Cannot train: Not enough valid numeric data points.")
             return False
             
-        # අලුත් features ලබා දීම
+        # Extract features and target
         X = df[["Current_N", "Current_P", "Current_K", "Req_N", "Req_P", "Req_K"]]
-        y_suitable = df["Is_Suitable"]
+        y_suitable = df["Is_Suitable"].astype(int)
 
-        print("Training Machine Learning Models...")
+        print(f"Training Random Forest Classifier on {len(df)} rows...")
         classifier = RandomForestClassifier(n_estimators=100, random_state=42)
         classifier.fit(X, y_suitable)
         
         with open(os.path.join(MODEL_DIR, "suitability_model.pkl"), "wb") as f:
             pickle.dump(classifier, f)
             
-        print("✅ Models successfully trained and saved!")
+        print("✅ Suitability model successfully trained and saved!")
         return True
         
     except Exception as e:

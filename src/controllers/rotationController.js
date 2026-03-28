@@ -4,9 +4,10 @@ const SoilConfig = require('../models/SoilConfig');
 const { calculateCurrentNutrients } = require('../../algorithms/nutrientCalculator');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
-// The Machine Learning Pipeline
+// Global dynamic import for node-fetch
+const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+
 exports.getRotationPlan = async (req, res) => {
   try {
     const { targetCrop, currentMonth, previousCrops, language } = req.body;
@@ -18,11 +19,10 @@ exports.getRotationPlan = async (req, res) => {
     
     let baseConfig = await SoilConfig.findOne() || { nutrients: [{symbol:'N', min:50}, {symbol:'P', min:20}, {symbol:'K', min:100}] };
     
+    // 1. Calculate the current soil nutrient status based on history
     const calcResult = calculateCurrentNutrients(baseConfig, previousCrops);
     
-    // Dynamic import for node-fetch if using Node < 18
-    const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-    
+    // 2. Send data to Python ML Backend for prediction
     const pythonResponse = await fetch('http://localhost:8000/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -43,6 +43,7 @@ exports.getRotationPlan = async (req, res) => {
        throw new Error(parsedData.error);
     }
 
+    // 3. Save the evaluated plan
     const newPlan = new RotationPlan({
       user: userId,
       targetCrop,
@@ -60,23 +61,16 @@ exports.getRotationPlan = async (req, res) => {
   }
 };
 
-
-
-// Fetch all saved plans for the logged-in user
 exports.getSavedPlans = async (req, res) => {
   try {
     const userId = req.user.id;
     const plans = await RotationPlan.find({ user: userId }).sort({ createdAt: -1 });
     res.status(200).json(plans);
   } catch (error) {
-    console.error('Fetch Plans Error:', error);
     res.status(500).json({ error: 'Failed to fetch saved rotation plans.' });
   }
 };
 
-
-
-// Delete a specific plan
 exports.deletePlan = async (req, res) => {
   try {
     const planId = req.params.id;
@@ -86,10 +80,8 @@ exports.deletePlan = async (req, res) => {
     if (!deletedPlan) {
       return res.status(404).json({ error: 'Plan not found or unauthorized.' });
     }
-
     res.status(200).json({ message: 'Plan deleted successfully.' });
   } catch (error) {
-    console.error('Delete Plan Error:', error);
     res.status(500).json({ error: 'Failed to delete the rotation plan.' });
   }
 };
