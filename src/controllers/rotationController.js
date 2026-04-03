@@ -17,12 +17,15 @@ exports.getRotationPlan = async (req, res) => {
       return res.status(400).json({ error: 'Please provide at least one past crop.' });
     }
     
+    console.log(`\n[CONTROLLER] Received Rotation Request for Target: ${targetCrop}`);
+    
     let baseConfig = await SoilConfig.findOne() || { nutrients: [{symbol:'N', min:50}, {symbol:'P', min:20}, {symbol:'K', min:100}] };
     
-    // 1. Calculate the current soil nutrient status based on history
+    // 1. Calculate current status
     const calcResult = calculateCurrentNutrients(baseConfig, previousCrops);
     
-    // 2. Send data to Python ML Backend for prediction
+    // 2. Send to Python
+    console.log(`[CONTROLLER] Sending calculated nutrients to Python ML Server...`);
     const pythonResponse = await fetch('http://localhost:8000/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -30,7 +33,7 @@ exports.getRotationPlan = async (req, res) => {
         targetCrop,
         currentMonth,
         previousCrops,
-        language: language || "Sinhala",
+        language: language || "English",
         calculatedNutrients: calcResult.current,
         historyImpact: calcResult.historyImpact,
         baselineNutrients: calcResult.baseline
@@ -40,8 +43,12 @@ exports.getRotationPlan = async (req, res) => {
     const parsedData = await pythonResponse.json();
 
     if (parsedData.error) {
+       console.log(`[CONTROLLER] Python Error: ${parsedData.error}`);
        throw new Error(parsedData.error);
     }
+
+    console.log(`[CONTROLLER] ML Decision: ${parsedData.targetEvaluation.isSuitable ? 'SUITABLE' : 'NOT SUITABLE'}`);
+    console.log(`[CONTROLLER] Saving Evaluation to MongoDB...`);
 
     // 3. Save the evaluated plan
     const newPlan = new RotationPlan({
@@ -51,9 +58,11 @@ exports.getRotationPlan = async (req, res) => {
       pastCrops: previousCrops,
       targetEvaluation: parsedData.targetEvaluation,
       soilNutrientLevels: parsedData.soilNutrientLevels,
+      alternativeSuggestions: parsedData.alternativeSuggestions || [] // ADD THIS LINE
     });
     
     await newPlan.save();
+    console.log(`[CONTROLLER] ✅ Plan successfully saved and returned to client.`);
     res.status(200).json(parsedData);
 
   } catch (error) {
