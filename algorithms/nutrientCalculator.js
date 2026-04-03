@@ -5,27 +5,38 @@ const calculateMonths = (startMonth, startYear, endMonth, endYear) => {
 };
 
 exports.calculateCurrentNutrients = (baseConfig, pastCrops) => {
+    console.log("\n--- [CALCULATOR] Starting Nutrient Calculation ---");
     let n = baseConfig?.nutrients.find(nut => nut.symbol === 'N')?.min || 50;
     let p = baseConfig?.nutrients.find(nut => nut.symbol === 'P')?.min || 20;
     let k = baseConfig?.nutrients.find(nut => nut.symbol === 'K')?.min || 100;
+
+    console.log(`[CALCULATOR] Baseline Soil: N=${n}, P=${p}, K=${k}`);
 
     let deltaN = 0, deltaP = 0, deltaK = 0;
 
     pastCrops.forEach(crop => {
         const duration = calculateMonths(crop.startMonth, crop.startYear, crop.endMonth, crop.endYear);
         
-        deltaN -= (duration * 1.2);
-        deltaP -= (duration * 0.4);
-        deltaK -= (duration * 0.8);
+        // Base depletion
+        let cropDeltaN = -(duration * 1.2);
+        let cropDeltaP = -(duration * 0.4);
+        let cropDeltaK = -(duration * 0.8);
 
         const fert = (crop.fertilizers || "").toLowerCase();
 
-        if (fert.includes('urea') || fert.includes('යූරියා')) deltaN += 15;
-        if (fert.includes('npk')) { deltaN += 10; deltaP += 10; deltaK += 10; }
-        if (fert.includes('compost')) { deltaN += 5; deltaP += 5; deltaK += 5; }
+        // Fertilizer additions
+        if (fert.includes('urea') || fert.includes('යූරියා')) cropDeltaN += 15;
+        if (fert.includes('npk')) { cropDeltaN += 10; cropDeltaP += 10; cropDeltaK += 10; }
+        if (fert.includes('compost')) { cropDeltaN += 5; cropDeltaP += 5; cropDeltaK += 5; }
+
+        console.log(`[CALCULATOR] Crop: ${crop.cropName} (${duration} months) -> N Change: ${cropDeltaN.toFixed(2)}, P Change: ${cropDeltaP.toFixed(2)}, K Change: ${cropDeltaK.toFixed(2)}`);
+
+        deltaN += cropDeltaN;
+        deltaP += cropDeltaP;
+        deltaK += cropDeltaK;
     });
 
-    return {
+    const result = {
         baseline: { N: n, P: p, K: k },
         historyImpact: { N: deltaN, P: deltaP, K: deltaK },
         current: {
@@ -34,4 +45,9 @@ exports.calculateCurrentNutrients = (baseConfig, pastCrops) => {
             K: Math.max(0, k + deltaK)
         }
     };
+
+    console.log(`[CALCULATOR] Final Current Soil Estimation: N=${result.current.N.toFixed(2)}, P=${result.current.P.toFixed(2)}, K=${result.current.K.toFixed(2)}`);
+    console.log("--------------------------------------------------\n");
+
+    return result;
 };

@@ -8,6 +8,7 @@ import os
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from dotenv import load_dotenv
+import json
 
 
 from nutrient_manager import get_or_create_nutrients
@@ -148,11 +149,66 @@ async def predict_rotation(req: RotationRequest):
 
     # 4. Generating remedies through AI if the soil is not suitable
     ai_remedy_message = ""
+    alternative_suggestions = [] # NEW ARRAY
+    
     if not ml_is_suitable:
         ai_remedy_message = get_ai_soil_remedy(req.targetCrop, diff_n, diff_p, diff_k, req.language)
+        print(f"[AI] Generating alternative crops for {req.targetCrop}...")
+        alternative_suggestions = get_ai_alternatives(current_n, current_p, current_k, req.targetCrop, req.language)
     else:
-        # It's good practice to still give a slight maintenance prompt even if suitable
         ai_remedy_message = "Soil is well-suited for this crop! Maintain current nutrient levels with standard agricultural practices."
+
+    # 5. Final Response (Update the return dictionary)
+    return {
+        "targetEvaluation": {
+            "isSuitable": ml_is_suitable,
+            "feedback": [
+                f"Nutrient evaluation complete for target: '{req.targetCrop}'.",
+                "Review the graphs and historical impact data below to see exact soil changes."
+            ],
+            "aiSoilRemedy": ai_remedy_message
+        },
+        "soilNutrientLevels": [
+            {"nutrient": "Nitrogen (N)", "level": f"{current_n} ppm", "depletionPrediction": status_n, "difference": round(diff_n, 2)},
+            {"nutrient": "Phosphorus (P)", "level": f"{current_p} ppm", "depletionPrediction": status_p, "difference": round(diff_p, 2)},
+            {"nutrient": "Potassium (K)", "level": f"{current_k} ppm", "depletionPrediction": status_k, "difference": round(diff_k, 2)}
+        ],
+        "alternativeSuggestions": alternative_suggestions # ADD THIS LINE
+    }
+
+def get_ai_alternatives(current_n, current_p, current_k, target_crop, language):
+    """Gemini හරහා පවතින පසට ගැලපෙන විකල්ප බෝග 2ක් ලබා ගැනීම"""
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    prompt = f"""
+    The farmer's soil currently has the following nutrient levels based on historical data:
+    Nitrogen (N): {current_n} ppm
+    Phosphorus (P): {current_p} ppm
+    Potassium (K): {current_k} ppm
+
+    The requested crop '{target_crop}' is NOT suitable right now.
+    Recommend exactly TWO alternative crops that THRIVE in these specific nutrient conditions.
+    Explain why they are suitable based specifically on the current N, P, and K levels provided.
+    Provide the response in {language}.
+    
+    Output ONLY a valid JSON array. No markdown, no extra text. Format exactly like this:
+    [
+      {{
+        "cropName": "Alternative Crop 1",
+        "reasons": ["Reason 1 based on soil data", "Reason 2"]
+      }},
+      {{
+        "cropName": "Alternative Crop 2",
+        "reasons": ["Reason 1 based on soil data", "Reason 2"]
+      }}
+    ]
+    """
+    try:
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        clean_text = response.text.replace('```json', '').replace('```', '').strip()
+        return json.loads(clean_text)
+    except Exception as e:
+        print(f"Alternative AI Error: {e}")
+        return []
 
     # 5. Final Response
     return {

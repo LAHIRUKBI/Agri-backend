@@ -6,33 +6,23 @@ const rotationPlanSchema = new mongoose.Schema({
   currentMonth: { type: String, required: true },
   pastCrops: [{
     cropName: String,
-    timePeriod: String,
+    startMonth: String,
+    startYear: String,
+    endMonth: String,
+    endYear: String,
     fertilizers: String,
     pesticides: String
   }],
-  soilCondition: {
-    status: String,
-    details: [String]
-  },
   targetEvaluation: {
     isSuitable: Boolean,
-    feedback: [String]
+    feedback: [String],
+    aiSoilRemedy: String // ADDED: Frontend needs this to render the ✨ AI Soil Preparation Guide
   },
-  alternativeSuggestions: [{
-    cropName: String,
-    reasons: [String]
-  }],
-  // New Table 1: Current Soil Condition & Depletion Prediction
   soilNutrientLevels: [{
     nutrient: String,
     level: String,
-    depletionPrediction: String
-  }],
-  // New Table 2: Required Nutrients
-  requiredNutrients: [{
-    nutrient: String,
-    recommendedSource: String,
-    amount: String
+    depletionPrediction: String,
+    difference: Number // ADDED: Frontend relies on this for the BarChart
   }],
   createdAt: { type: Date, default: Date.now }
 });
