@@ -1,28 +1,28 @@
 # backend/model/app.py
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, List
 import pandas as pd
 import pickle
 import os
+import json
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from dotenv import load_dotenv
-import json
+from sklearn.preprocessing import OneHotEncoder, MultiLabelBinarizer
+from sklearn.ensemble import RandomForestClassifier
 
 
 from nutrient_manager import get_or_create_nutrients
 from data_generator import check_and_generate_data
 from train import train_models
-from guidance_data_generator import fetch_and_save_district_data, month_to_num, initialize_guidance_csvs, fetch_and_save_crop_steps
-from guidance_train import train_guidance_model
 
 load_dotenv()
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allows requests from your React frontend
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -30,6 +30,9 @@ app.add_middleware(
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(CURRENT_DIR, "saved_models")
+DATA_DIR = os.path.join(CURRENT_DIR, "data")
+os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # Global Variable to hold the model in memory
 suitability_model = None
@@ -70,6 +73,7 @@ class RotationRequest(BaseModel):
 class GuidanceRequest(BaseModel):
     district: str
     month: str
+    language: str
 
 def get_ai_soil_remedy(crop_name, n_diff, p_diff, k_diff, language):
     """Gemini හරහා පස සකසා ගැනීමට අවශ්‍ය පිළියම් ලබා දීම"""
@@ -227,111 +231,168 @@ def get_ai_alternatives(current_n, current_p, current_k, target_crop, language):
         ]
     }
 
+def train_crop_recommendation_model():
+    dataset_path = os.path.join(DATA_DIR, "district_suitability_crops.csv")
+    
+    if not os.path.exists(dataset_path):
+        return False # Skips training if CSV (uses previously trained model)
+        
+    print(f"\n[ML TRAINING] 🧠 district_suitability_crops.csv මගින් Model එක Training වෙමින් පවතී...")
+    
+    df = pd.read_csv(dataset_path)
+    # Listing of all matching crops by district and month
+    grouped = df.groupby(['District', 'Month_Name'])['Crop_Name'].apply(list).reset_index()
+    
+    # X (Features) - OneHotEncoding
+    X_raw = grouped[['District', 'Month_Name']]
+    encoder = OneHotEncoder(handle_unknown='ignore')
+    X = encoder.fit_transform(X_raw)
+    
+    # y (Target) - MultiLabelBinarizer (to predict multiple crops at once)
+    mlb = MultiLabelBinarizer()
+    y = mlb.fit_transform(grouped['Crop_Name'])
+    
+    # Train Random Forest Model
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+    
+    # Save Models
+    with open(os.path.join(MODEL_DIR, "crop_rec_model.pkl"), "wb") as f: pickle.dump(model, f)
+    with open(os.path.join(MODEL_DIR, "crop_rec_encoder.pkl"), "wb") as f: pickle.dump(encoder, f)
+    with open(os.path.join(MODEL_DIR, "crop_rec_mlb.pkl"), "wb") as f: pickle.dump(mlb, f)
+    
+    print("[ML TRAINING] ✅ Model එක සාර්ථකව Train කර අවසන්! දැන් dataset එක නොමැතිව predictions ලබා දිය හැක.\n")
+    return True
 
 @app.post("/recommend_crops")
 async def recommend_crops(req: GuidanceRequest):
-    initialize_guidance_csvs()
     data_dir = os.path.join(CURRENT_DIR, "data")
-    suit_csv = os.path.join(data_dir, "district_suitability.csv")
+    suit_csv = os.path.join(data_dir, "district_suitability_crops.csv")
     steps_csv = os.path.join(data_dir, "cultivation_steps.csv")
     
-    df = pd.read_csv(suit_csv)
-    
-    # 1. AI/Dataset Sync: Check if district & month exists in local dataset
-    month_val = month_to_num(req.month)
-    data_exists = not df.empty and len(df[(df['District'].str.lower() == req.district.lower()) & (df['Month_Num'] == month_val)]) > 0
-    
-    if not data_exists:
-        success = fetch_and_save_district_data(req.district, req.month)
-        if success:
-            train_guidance_model()
-            df = pd.read_csv(suit_csv)
-        else:
-            return {"error": "Failed to fetch data from AI."}
-            
-    # 2. ML Prediction
+    # 1. Load the new Dataset
     try:
-        with open(os.path.join(MODEL_DIR, "crop_recommender.pkl"), "rb") as f:
-            model = pickle.load(f)
-        with open(os.path.join(MODEL_DIR, "district_encoder.pkl"), "rb") as f:
-            dist_enc = pickle.load(f)
-        with open(os.path.join(MODEL_DIR, "crop_encoder.pkl"), "rb") as f:
-            crop_enc = pickle.load(f)
+        df = pd.read_csv(suit_csv)
     except FileNotFoundError:
-        train_guidance_model()
-        return {"error": "Training model for the first time. Please retry in 5 seconds."}
+        return {"error": "Dataset district_suitability_crops.csv is missing."}
+        
+    # 2. Filter dataset for the selected District and Month
+    matching_data = df[(df['District'].str.lower() == req.district.lower()) & 
+                       (df['Month_Name'].str.lower() == req.month.lower())]
+                       
+    if matching_data.empty:
+         return {"success": False, "message": f"No cultivation data found for {req.district} in {req.month}."}
 
+    # 3. Load static steps dataset
     try:
-        encoded_district = dist_enc.transform([req.district])[0]
-    except ValueError:
-        return {"error": "District not recognized by ML model yet. Try fetching data again."}
-
-    suitable_crops = []
-    for crop in crop_enc.classes_:
-        encoded_crop = crop_enc.transform([crop])[0]
-        prediction = model.predict([[encoded_district, month_val, encoded_crop]])
-        if prediction[0] == 1:
-            suitable_crops.append(crop)
-
-    # 3. Retrieve Cultivation Steps & Trigger Missing Data AI
-    steps_df = pd.read_csv(steps_csv).fillna("")
+        steps_df = pd.read_csv(steps_csv).fillna("")
+    except FileNotFoundError:
+        steps_df = pd.DataFrame()
+        
     recommendations = []
     
-    for crop in suitable_crops:
-        # Isolate steps just for this crop
-        crop_data = steps_df[steps_df['Crop_Name'].str.lower() == crop.lower()]
-        crop_steps_raw = crop_data.to_dict('records')
+    # 4. Map Dataset rows to UI response format
+    for _, row in matching_data.iterrows():
+        crop = row['Crop_Name']
         
-        # --- THE MISSING STEPS TRIGGER ---
-        if not crop_steps_raw:
-            success = fetch_and_save_crop_steps(crop)
-            if success:
-                steps_df = pd.read_csv(steps_csv).fillna("")
-                crop_data = steps_df[steps_df['Crop_Name'].str.lower() == crop.lower()]
-                crop_steps_raw = crop_data.to_dict('records')
+        # Merge Reason_1 through Reason_5 safely into a cohesive paragraph
+        reasons = []
+        for i in range(1, 6):
+            val = row.get(f'Reason_{i}')
+            if pd.notna(val) and str(val).strip() != "":
+                reasons.append(str(val).strip())
         
-        # --- Map Python Keys to strictly match React & Mongoose Keys ---
+        reasoning_text = " ".join(reasons) if reasons else f"{crop} is highly suitable for {req.district} during {req.month}."
+        
+        # 5. Fetch corresponding static steps for the crop
         formatted_steps = []
-        for raw in crop_steps_raw:
-            formatted_steps.append({
-                "stage": str(raw.get("Stage", "")),
-                "instructions": str(raw.get("Instructions", "")),
-                "estimatedDays": int(raw.get("Estimated_Days", 0)) if raw.get("Estimated_Days") else 0,
-                "alert": str(raw.get("Alert", ""))
-            })
+        if not steps_df.empty and 'Crop_Name' in steps_df.columns:
+            crop_data = steps_df[steps_df['Crop_Name'].str.lower() == crop.lower()]
+            crop_steps_raw = crop_data.to_dict('records')
             
-        if formatted_steps:
-            recommendations.append({
-                "cropName": crop,
-                "reasoning": f"Based on historical agricultural data, {crop} is highly suitable for {req.district} in {req.month}.",
-                "steps": formatted_steps
-            })
+            for raw in crop_steps_raw:
+                raw_days = raw.get("Estimated_Days", 0)
+                try:
+                    est_days = int(float(raw_days)) if str(raw_days).strip() else 0
+                except (ValueError, TypeError):
+                    est_days = 0
 
+                formatted_steps.append({
+                    "stage": str(raw.get("Stage", "")),
+                    "instructions": str(raw.get("Instructions", "")),
+                    "estimatedDays": est_days,
+                    "alert": str(raw.get("Alert", ""))
+                })
+                
+        recommendations.append({
+            "cropName": crop,
+            "reasoning": reasoning_text,
+            "steps": formatted_steps
+        })
+        
     return {"success": True, "data": recommendations}
 
 
 
 @app.get("/get_crop_steps/{crop_name}")
-async def get_crop_steps(crop_name: str):
-    """Dynamically fetches steps for a specific crop for the Tracking Profile."""
-    data_dir = os.path.join(CURRENT_DIR, "data")
-    steps_csv = os.path.join(data_dir, "cultivation_steps.csv")
+async def get_crop_steps(crop_name: str, language: str = "English"):
+    steps_csv = os.path.join(DATA_DIR, "cultivation_steps.csv")
     
-    try:
-        steps_df = pd.read_csv(steps_csv).fillna("")
-        # Isolate steps just for this requested crop
-        crop_data = steps_df[steps_df['Crop_Name'].str.lower() == crop_name.lower()]
-        crop_steps_raw = crop_data.to_dict('records')
+    # 1. Checking if the crop exists in an existing CSV
+    if os.path.exists(steps_csv):
+        df = pd.read_csv(steps_csv).fillna("")
+        crop_data = df[df['Crop_Name'].str.lower() == crop_name.lower()]
         
-        formatted_steps = []
-        for raw in crop_steps_raw:
-            formatted_steps.append({
-                "stage": str(raw.get("Stage", "")),
-                "instructions": str(raw.get("Instructions", "")),
-                "estimatedDays": int(raw.get("Estimated_Days", 0)) if raw.get("Estimated_Days") else 0,
-                "alert": str(raw.get("Alert", ""))
+        if not crop_data.empty:
+            print(f"[INFO] '{crop_name}' සඳහා පියවරයන් cultivation_steps.csv මගින් ලබා ගනී.")
+            formatted_steps = []
+            for raw in crop_data.to_dict('records'):
+                try: est_days = int(float(raw.get("Estimated_Days", 0)))
+                except: est_days = 0
+                formatted_steps.append({
+                    "stage": str(raw.get("Stage", "")),
+                    "instructions": str(raw.get("Instructions", "")),
+                    "estimatedDays": est_days,
+                    "alert": str(raw.get("Alert", ""))
+                })
+            return {"success": True, "steps": formatted_steps}
+
+    # 2. Generating via AI (Gemini) if not in CSV
+    print(f"[AI INFO] '{crop_name}' CSV එකෙහි නොමැත. AI මගින් පියවරයන් ජනනය කරමින් පවතී...")
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    prompt = f"""
+    Provide exactly 5 essential cultivation steps for growing '{crop_name}' in {language}.
+    Output ONLY a valid JSON array matching this structure exactly (No markdown, no extra text):
+    [
+      {{ "stage": "Stage Name", "instructions": "Detailed instructions", "estimatedDays": 10, "alert": "Any warning or leave empty" }}
+    ]
+    """
+    try:
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        clean_text = response.text.replace('```json', '').replace('```', '').strip()
+        ai_steps = json.loads(clean_text)
+        
+        # 3. Adding the generated steps to cultivation_steps.csv (Save to CSV)
+        new_rows = []
+        for step in ai_steps:
+            new_rows.append({
+                "Crop_Name": crop_name,
+                "Stage": step.get("stage", ""),
+                "Instructions": step.get("instructions", ""),
+                "Estimated_Days": step.get("estimatedDays", 0),
+                "Alert": step.get("alert", "")
             })
             
-        return {"success": True, "steps": formatted_steps}
+        new_df = pd.DataFrame(new_rows)
+        # If the file does not exist, it will be created, if it exists, it will be appended.
+        if not os.path.exists(steps_csv):
+            new_df.to_csv(steps_csv, index=False)
+        else:
+            new_df.to_csv(steps_csv, mode='a', header=False, index=False)
+            
+        print(f"[AI INFO] සාර්ථකයි! '{crop_name}' සඳහා නව දත්ත cultivation_steps.csv හි ගබඩා කරන ලදී.")
+        return {"success": True, "steps": ai_steps}
+        
     except Exception as e:
-        return {"error": str(e)}
+        print(f"AI Error: {e}")
+        return {"success": False, "message": "Failed to generate steps via AI."}

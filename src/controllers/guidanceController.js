@@ -27,7 +27,8 @@ exports.getRecommendations = async (req, res) => {
     
     const response = await axios.post(pythonApiUrl, {
         district: district,
-        month: month
+        month: month, 
+        language: language || 'English'
     });
 
     if (response.data.error) {
@@ -46,5 +47,24 @@ exports.getRecommendations = async (req, res) => {
   } catch (error) {
     console.error("Error connecting to Python ML Pipeline:", error.message);
     res.status(500).json({ success: false, message: "Failed to process cultivation guidance via ML pipeline." });
+  }
+};
+
+
+exports.getCropSteps = async (req, res) => {
+  try {
+    const { cropName, language } = req.body;
+    const pythonApiUrl = `http://localhost:8000/get_crop_steps/${encodeURIComponent(cropName)}?language=${language}`;
+    
+    const response = await axios.get(pythonApiUrl);
+
+    if (response.data.success) {
+      res.status(200).json({ success: true, steps: response.data.steps });
+    } else {
+      res.status(400).json({ success: false, message: "Failed to fetch or generate steps." });
+    }
+  } catch (error) {
+    console.error("Error fetching steps:", error.message);
+    res.status(500).json({ success: false, message: "Internal server error while fetching steps." });
   }
 };
