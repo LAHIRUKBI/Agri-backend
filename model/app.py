@@ -51,6 +51,10 @@ def load_suitability_model():
 # Load model on server startup
 load_suitability_model()
 
+crop_rec_model = None
+crop_rec_encoder = None
+crop_rec_mlb = None
+
 class CropHistory(BaseModel):
     cropName: str
     startMonth: str
@@ -231,32 +235,43 @@ def get_ai_alternatives(current_n, current_p, current_k, target_crop, language):
         ]
     }
 
+def load_crop_rec_models():
+    """මෙමගින් train කර ඇති model එක මතකයට (memory) ලබා ගනී"""
+    global crop_rec_model, crop_rec_encoder, crop_rec_mlb
+    try:
+        with open(os.path.join(MODEL_DIR, "crop_rec_model.pkl"), "rb") as f:
+            crop_rec_model = pickle.load(f)
+        with open(os.path.join(MODEL_DIR, "crop_rec_encoder.pkl"), "rb") as f:
+            crop_rec_encoder = pickle.load(f)
+        with open(os.path.join(MODEL_DIR, "crop_rec_mlb.pkl"), "rb") as f:
+            crop_rec_mlb = pickle.load(f)
+        print("✅ Crop Recommendation ML Models loaded into memory.")
+        return True
+    except Exception as e:
+        return False
+
 def train_crop_recommendation_model():
+    """CSV එක තිබේනම් එයින් Model එක Train කිරීම"""
     dataset_path = os.path.join(DATA_DIR, "district_suitability_crops.csv")
     
     if not os.path.exists(dataset_path):
-        return False # Skips training if CSV (uses previously trained model)
+        return False # CSV එක නැත්නම් skip කරයි (කලින් train කල model එක භාවිතා කරයි)
         
     print(f"\n[ML TRAINING] 🧠 district_suitability_crops.csv මගින් Model එක Training වෙමින් පවතී...")
     
     df = pd.read_csv(dataset_path)
-    # Listing of all matching crops by district and month
     grouped = df.groupby(['District', 'Month_Name'])['Crop_Name'].apply(list).reset_index()
     
-    # X (Features) - OneHotEncoding
     X_raw = grouped[['District', 'Month_Name']]
     encoder = OneHotEncoder(handle_unknown='ignore')
     X = encoder.fit_transform(X_raw)
     
-    # y (Target) - MultiLabelBinarizer (to predict multiple crops at once)
     mlb = MultiLabelBinarizer()
     y = mlb.fit_transform(grouped['Crop_Name'])
     
-    # Train Random Forest Model
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
     
-    # Save Models
     with open(os.path.join(MODEL_DIR, "crop_rec_model.pkl"), "wb") as f: pickle.dump(model, f)
     with open(os.path.join(MODEL_DIR, "crop_rec_encoder.pkl"), "wb") as f: pickle.dump(encoder, f)
     with open(os.path.join(MODEL_DIR, "crop_rec_mlb.pkl"), "wb") as f: pickle.dump(mlb, f)
@@ -264,70 +279,49 @@ def train_crop_recommendation_model():
     print("[ML TRAINING] ✅ Model එක සාර්ථකව Train කර අවසන්! දැන් dataset එක නොමැතිව predictions ලබා දිය හැක.\n")
     return True
 
+# Server එක Start වෙද්දීම Model එක load කරගැනීම හෝ Train කිරීම
+if not load_crop_rec_models():
+    if train_crop_recommendation_model():
+        load_crop_rec_models()
+
 @app.post("/recommend_crops")
 async def recommend_crops(req: GuidanceRequest):
-    data_dir = os.path.join(CURRENT_DIR, "data")
-    suit_csv = os.path.join(data_dir, "district_suitability_crops.csv")
-    steps_csv = os.path.join(data_dir, "cultivation_steps.csv")
+    global crop_rec_model, crop_rec_encoder, crop_rec_mlb
     
-    # 1. Load the new Dataset
+    # Model එක load වී නැත්නම් සහ CSV එකත් නැත්නම් Error එකක් යැවීම
+    if crop_rec_model is None:
+        if train_crop_recommendation_model():
+             load_crop_rec_models()
+        else:
+             return {"error": "ML Model is not trained and dataset is missing!"}
+    
+    # 1. Dataset එක භාවිතා නොකර ML Model එක මගින් Predictions ලබා ගැනීම
+    input_data = pd.DataFrame([{"District": req.district.title(), "Month_Name": req.month.title()}])
+    
     try:
-        df = pd.read_csv(suit_csv)
-    except FileNotFoundError:
-        return {"error": "Dataset district_suitability_crops.csv is missing."}
+        # Encoder එක හරහා data සකස් කර Model එකට ලබාදීම
+        X_input = crop_rec_encoder.transform(input_data)
+        y_pred = crop_rec_model.predict(X_input)
         
-    # 2. Filter dataset for the selected District and Month
-    matching_data = df[(df['District'].str.lower() == req.district.lower()) & 
-                       (df['Month_Name'].str.lower() == req.month.lower())]
-                       
-    if matching_data.empty:
-         return {"success": False, "message": f"No cultivation data found for {req.district} in {req.month}."}
+        # Binary result එක නැවත Crop Names බවට පත් කිරීම
+        predicted_crops = crop_rec_mlb.inverse_transform(y_pred)[0] 
+    except Exception as e:
+        return {"success": False, "message": f"Prediction failed for {req.district}."}
 
-    # 3. Load static steps dataset
-    try:
-        steps_df = pd.read_csv(steps_csv).fillna("")
-    except FileNotFoundError:
-        steps_df = pd.DataFrame()
-        
+    if not predicted_crops:
+         return {"success": False, "message": f"No crops predicted for {req.district} in {req.month}."}
+
     recommendations = []
     
-    # 4. Map Dataset rows to UI response format
-    for _, row in matching_data.iterrows():
-        crop = row['Crop_Name']
+    # 2. UI එකට අවශ්‍ය Data Format එකට සකස් කිරීම
+    for crop in predicted_crops:
+        # CSV එක ඉවත් කර ඇති නිසා, සාමාන්‍ය Reasoning එකක් මෙහිදී එකතු කර ඇත
+        reasoning_text = f"Based on ML predictions, {crop} is highly suitable for cultivation in {req.district} during {req.month} considering the seasonal and geographical patterns."
         
-        # Merge Reason_1 through Reason_5 safely into a cohesive paragraph
-        reasons = []
-        for i in range(1, 6):
-            val = row.get(f'Reason_{i}')
-            if pd.notna(val) and str(val).strip() != "":
-                reasons.append(str(val).strip())
-        
-        reasoning_text = " ".join(reasons) if reasons else f"{crop} is highly suitable for {req.district} during {req.month}."
-        
-        # 5. Fetch corresponding static steps for the crop
-        formatted_steps = []
-        if not steps_df.empty and 'Crop_Name' in steps_df.columns:
-            crop_data = steps_df[steps_df['Crop_Name'].str.lower() == crop.lower()]
-            crop_steps_raw = crop_data.to_dict('records')
-            
-            for raw in crop_steps_raw:
-                raw_days = raw.get("Estimated_Days", 0)
-                try:
-                    est_days = int(float(raw_days)) if str(raw_days).strip() else 0
-                except (ValueError, TypeError):
-                    est_days = 0
-
-                formatted_steps.append({
-                    "stage": str(raw.get("Stage", "")),
-                    "instructions": str(raw.get("Instructions", "")),
-                    "estimatedDays": est_days,
-                    "alert": str(raw.get("Alert", ""))
-                })
-                
         recommendations.append({
             "cropName": crop,
             "reasoning": reasoning_text,
-            "steps": formatted_steps
+            "steps": [] # පියවරයන් Frontend එකෙන් View Steps ඔබන විට load වන නිසා මෙය හිස්ව යවයි
         })
         
     return {"success": True, "data": recommendations}
