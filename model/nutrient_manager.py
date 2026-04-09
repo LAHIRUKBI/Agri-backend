@@ -11,10 +11,12 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(CURRENT_DIR, "data")
 CSV_PATH = os.path.join(DATA_DIR, "nutrients_data_set.csv")
 
+# COLUMNS යාවත්කාලීන කර ඇත (N, P, K සඳහා පමණක් Min සහ Max අගයන් සහිතව)
 COLUMNS = [
     "Crop_Name_EN", "Crop_Name_SI", 
-    "Min_Nitrogen_ppm", "Min_Phosphorus_ppm", "Min_Potassium_ppm",
-    "Min_Calcium_ppm", "Min_Magnesium_ppm"
+    "Min_Nitrogen_ppm", "Max_Nitrogen_ppm",
+    "Min_Phosphorus_ppm", "Max_Phosphorus_ppm",
+    "Min_Potassium_ppm", "Max_Potassium_ppm"
 ]
 
 # Robust Env Loading (Walks up the directory tree to find .env)
@@ -46,18 +48,19 @@ def initialize_csv():
 
 def fallback_crop_data(crop_name):
     """If the AI fails, use this safe default so the ML pipeline doesn't crash."""
-    print(f"⚠️ Using fallback default data for {crop_name}")
+    print(f"⚠️ Using fallback default data for {crop_name} (Not saving to CSV)")
     safe_data = {
         "Crop_Name_EN": crop_name,
         "Crop_Name_SI": crop_name,
         "Min_Nitrogen_ppm": 40.0,
+        "Max_Nitrogen_ppm": 80.0,
         "Min_Phosphorus_ppm": 20.0,
+        "Max_Phosphorus_ppm": 40.0,
         "Min_Potassium_ppm": 60.0,
-        "Min_Calcium_ppm": 500.0,
-        "Min_Magnesium_ppm": 50.0
+        "Max_Potassium_ppm": 120.0
     }
-    new_row_df = pd.DataFrame([safe_data], columns=COLUMNS)
-    new_row_df.to_csv(CSV_PATH, mode='a', header=False, index=False)
+    
+    # Program එක crash නොවීමට පමණක් safe_data return කරයි.
     return safe_data
 
 def fetch_from_ai_and_save(crop_name):
@@ -67,17 +70,19 @@ def fetch_from_ai_and_save(crop_name):
     if not client:
         return fallback_crop_data(crop_name)
 
+    # Prompt එක N-P-K පරාසයන් පමණක් ඉල්ලීමට වෙනස් කර ඇත
     prompt = f"""
-    Provide the minimum ideal soil nutrient levels (in ppm) required to grow '{crop_name}'.
-    Return ONLY a JSON object. No markdown, no extra text.
+    Provide the minimum and maximum ideal soil nutrient levels (in ppm) required to grow '{crop_name}'.
+    Return ONLY a JSON object containing Nitrogen, Phosphorus, and Potassium. No markdown, no extra text.
     {{
         "Crop_Name_EN": "English Name",
         "Crop_Name_SI": "Sinhala Name",
-        "Min_Nitrogen_ppm": 50,
-        "Min_Phosphorus_ppm": 20,
-        "Min_Potassium_ppm": 100,
-        "Min_Calcium_ppm": 1000,
-        "Min_Magnesium_ppm": 100
+        "Min_Nitrogen_ppm": 50.0,
+        "Max_Nitrogen_ppm": 100.0,
+        "Min_Phosphorus_ppm": 20.0,
+        "Max_Phosphorus_ppm": 40.0,
+        "Min_Potassium_ppm": 100.0,
+        "Max_Potassium_ppm": 200.0
     }}
     """
     try:
@@ -91,16 +96,19 @@ def fetch_from_ai_and_save(crop_name):
             
         data = json.loads(match.group(0))
         
+        # JSON එකෙන් N, P, K සඳහා පමණක් Min සහ Max අගයන් ලබා ගැනීම
         safe_data = {
             "Crop_Name_EN": str(data.get("Crop_Name_EN", crop_name)),
             "Crop_Name_SI": str(data.get("Crop_Name_SI", crop_name)),
             "Min_Nitrogen_ppm": float(data.get("Min_Nitrogen_ppm", 40.0)),
+            "Max_Nitrogen_ppm": float(data.get("Max_Nitrogen_ppm", 80.0)),
             "Min_Phosphorus_ppm": float(data.get("Min_Phosphorus_ppm", 20.0)),
+            "Max_Phosphorus_ppm": float(data.get("Max_Phosphorus_ppm", 40.0)),
             "Min_Potassium_ppm": float(data.get("Min_Potassium_ppm", 60.0)),
-            "Min_Calcium_ppm": float(data.get("Min_Calcium_ppm", 500.0)),
-            "Min_Magnesium_ppm": float(data.get("Min_Magnesium_ppm", 50.0))
+            "Max_Potassium_ppm": float(data.get("Max_Potassium_ppm", 120.0))
         }
         
+        # AI මගින් නිවැරදිව ලබාගත් දත්ත පමණක් CSV එකේ ගබඩා කරයි
         new_row_df = pd.DataFrame([safe_data], columns=COLUMNS)
         new_row_df.to_csv(CSV_PATH, mode='a', header=False, index=False)
         print(f"✅ Data for {crop_name} saved securely to {CSV_PATH}")
