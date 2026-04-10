@@ -1,53 +1,48 @@
-const calculateMonths = (startMonth, startYear, endMonth, endYear) => {
-    const months = { 'January': 1, 'February': 2, 'March': 3, 'April': 4, 'May': 5, 'June': 6, 'July': 7, 'August': 8, 'September': 9, 'October': 10, 'November': 11, 'December': 12 };
-    const diff = (parseInt(endYear) - parseInt(startYear)) * 12 + (months[endMonth] - months[startMonth]);
-    return diff > 0 ? diff : 1;
-};
+// algorithms/nutrientCalculator.js
+exports.calculateGapAndSuitability = (predictedSoil, targetRequirements) => {
+    // 1. අවශ්‍ය කරන Standard පරාසයන්
+    const reqNMin = parseFloat(targetRequirements.Min_Nitrogen_ppm || 0);
+    const reqNMax = parseFloat(targetRequirements.Max_Nitrogen_ppm || 999999);
+    const reqPMin = parseFloat(targetRequirements.Min_Phosphorus_ppm || 0);
+    const reqPMax = parseFloat(targetRequirements.Max_Phosphorus_ppm || 999999);
+    const reqKMin = parseFloat(targetRequirements.Min_Potassium_ppm || 0);
+    const reqKMax = parseFloat(targetRequirements.Max_Potassium_ppm || 999999);
 
-exports.calculateCurrentNutrients = (baseConfig, pastCrops) => {
-    console.log("\n--- [CALCULATOR] Starting Nutrient Calculation ---");
-    let n = baseConfig?.nutrients.find(nut => nut.symbol === 'N')?.min || 50;
-    let p = baseConfig?.nutrients.find(nut => nut.symbol === 'P')?.min || 20;
-    let k = baseConfig?.nutrients.find(nut => nut.symbol === 'K')?.min || 100;
+    // 2. Midpoints ගණනය කිරීම (Surplus/Deficit බැලීමට)
+    const midN = (reqNMin + reqNMax) / 2;
+    const midP = (reqPMin + reqPMax) / 2;
+    const midK = (reqKMin + reqKMax) / 2;
 
-    console.log(`[CALCULATOR] Baseline Soil: N=${n}, P=${p}, K=${k}`);
+    // 3. වෙනස ගණනය කිරීම (Predicted NPK - Required Midpoint)
+    const diffN = predictedSoil.current_n - midN;
+    const diffP = predictedSoil.current_p - midP;
+    const diffK = predictedSoil.current_k - midK;
 
-    let deltaN = 0, deltaP = 0, deltaK = 0;
-
-    pastCrops.forEach(crop => {
-        const duration = calculateMonths(crop.startMonth, crop.startYear, crop.endMonth, crop.endYear);
-        
-        // Base depletion
-        let cropDeltaN = -(duration * 1.2);
-        let cropDeltaP = -(duration * 0.4);
-        let cropDeltaK = -(duration * 0.8);
-
-        const fert = (crop.fertilizers || "").toLowerCase();
-
-        // Fertilizer additions
-        if (fert.includes('urea') || fert.includes('යූරියා')) cropDeltaN += 15;
-        if (fert.includes('npk')) { cropDeltaN += 10; cropDeltaP += 10; cropDeltaK += 10; }
-        if (fert.includes('compost')) { cropDeltaN += 5; cropDeltaP += 5; cropDeltaK += 5; }
-
-        console.log(`[CALCULATOR] Crop: ${crop.cropName} (${duration} months) -> N Change: ${cropDeltaN.toFixed(2)}, P Change: ${cropDeltaP.toFixed(2)}, K Change: ${cropDeltaK.toFixed(2)}`);
-
-        deltaN += cropDeltaN;
-        deltaP += cropDeltaP;
-        deltaK += cropDeltaK;
-    });
-
-    const result = {
-        baseline: { N: n, P: p, K: k },
-        historyImpact: { N: deltaN, P: deltaP, K: deltaK },
-        current: {
-            N: Math.max(0, n + deltaN),
-            P: Math.max(0, p + deltaP),
-            K: Math.max(0, k + deltaK)
-        }
+    const evaluateStatus = (diff) => {
+        if (diff < -5.0) return "Deficit";
+        if (diff > 5.0) return "Surplus";
+        return "Stable";
     };
 
-    console.log(`[CALCULATOR] Final Current Soil Estimation: N=${result.current.N.toFixed(2)}, P=${result.current.P.toFixed(2)}, K=${result.current.K.toFixed(2)}`);
-    console.log("--------------------------------------------------\n");
+    // 4. වගාවට සුදුසුද යන්න තීරණය කිරීම
+    const isSuitable = (
+        predictedSoil.current_n >= reqNMin && predictedSoil.current_n <= reqNMax &&
+        predictedSoil.current_p >= reqPMin && predictedSoil.current_p <= reqPMax &&
+        predictedSoil.current_k >= reqKMin && predictedSoil.current_k <= reqKMax
+    );
 
-    return result;
+    return {
+        isSuitable,
+        requirements: {
+            N: { min: reqNMin, max: reqNMax, mid: midN },
+            P: { min: reqPMin, max: reqPMax, mid: midP },
+            K: { min: reqKMin, max: reqKMax, mid: midK }
+        },
+        differences: { diffN, diffP, diffK },
+        statuses: {
+            N: evaluateStatus(diffN),
+            P: evaluateStatus(diffP),
+            K: evaluateStatus(diffK)
+        }
+    };
 };
