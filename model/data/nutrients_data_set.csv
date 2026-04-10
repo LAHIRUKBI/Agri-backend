@@ -1,2 +1,8 @@
 Crop_Name_EN,Crop_Name_SI,Min_Nitrogen_ppm,Max_Nitrogen_ppm,Min_Phosphorus_ppm,Max_Phosphorus_ppm,Min_Potassium_ppm,Max_Potassium_ppm
 Ash Gourd,පුහුල්,25.0,50.0,15.0,25.0,40.0,60.0
+Eggplant,බටු,50.0,100.0,20.0,40.0,100.0,200.0
+Cooking Melon,කැකිරි,50.0,100.0,25.0,50.0,100.0,200.0
+Banana Pepper,මාලුමිරිස්,75.0,150.0,30.0,50.0,120.0,200.0
+Ridge Gourd,වැටකොලු,75.0,150.0,30.0,50.0,120.0,200.0
+Beans,බෝන්චි,50.0,100.0,20.0,40.0,100.0,200.0
+Cowpea,කව්පි,30.0,80.0,25.0,50.0,120.0,220.0

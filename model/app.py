@@ -1,21 +1,19 @@
 # backend/model/app.py
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Dict, Any, List
+from typing import Dict, List
 import pandas as pd
 import pickle
 import os
 import json
+import numpy as np
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from dotenv import load_dotenv
 from sklearn.preprocessing import OneHotEncoder, MultiLabelBinarizer
 from sklearn.ensemble import RandomForestClassifier
 
-
-from nutrient_manager import get_or_create_nutrients
-from data_generator import check_and_generate_data
-from train import train_models
+from nutrient_manager import get_or_create_nutrients   # only for crop NPK requirements
 
 load_dotenv()
 app = FastAPI()
@@ -34,209 +32,61 @@ DATA_DIR = os.path.join(CURRENT_DIR, "data")
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# Global Variable to hold the model in memory
-suitability_model = None
-
-def load_suitability_model():
-    global suitability_model
-    model_path = os.path.join(MODEL_DIR, "suitability_model.pkl")
-    if os.path.exists(model_path):
-        try:
-            with open(model_path, "rb") as f:
-                suitability_model = pickle.load(f)
-            print("✅ Suitability ML Model loaded into memory.")
-        except Exception as e:
-            print(f"❌ Error loading model: {e}")
-
-# Load model on server startup
-load_suitability_model()
-
+# ---------- Global ML models ----------
+npk_model = None
+npk_scaler = None
+agro_df = None               # loaded once at startup
 crop_rec_model = None
 crop_rec_encoder = None
 crop_rec_mlb = None
 
-class CropHistory(BaseModel):
-    cropName: str
-    startMonth: str
-    startYear: str
-    endMonth: str
-    endYear: str
-    fertilizers: str
-    pesticides: str
-
-class RotationRequest(BaseModel):
-    targetCrop: str
-    currentMonth: str
-    previousCrops: list[CropHistory]
-    language: str
-    calculatedNutrients: Dict[str, float]
-    historyImpact: Dict[str, float] 
-    baselineNutrients: Dict[str, float] 
-
-
-class GuidanceRequest(BaseModel):
-    district: str
-    month: str
-    language: str
-
-def get_ai_soil_remedy(crop_name, n_diff, p_diff, k_diff, language):
-    """Gemini හරහා පස සකසා ගැනීමට අවශ්‍ය පිළියම් ලබා දීම"""
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    prompt = f"""
-    The farmer wants to plant {crop_name}. Currently, the soil has the following nutrient differences compared to what is required:
-    Nitrogen difference: {n_diff:.2f} ppm
-    Phosphorus difference: {p_diff:.2f} ppm
-    Potassium difference: {k_diff:.2f} ppm
-    (Negative values mean a deficit, positive mean a surplus).
-    Provide a clear, brief, and practical agricultural recommendation on how to prepare the soil, what fertilizers to add, or what to avoid to fix this soil for the crop. Provide the answer in {language}.
-    """
-    try:
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-        return response.text.strip()
-    except Exception as e:
-        print(f"AI Error: {e}")
-        return "Please apply a balanced NPK fertilizer based on standard agricultural guidelines."
-    
-
-
-@app.post("/predict")
-async def predict_rotation(req: RotationRequest):
-    global suitability_model
-
-    # 1. Get Target Crop Requirements
-    target_requirements = get_or_create_nutrients(req.targetCrop)
-    if not target_requirements:
-        return {"error": "Failed to determine crop requirements from dataset."}
-
-    # 2. Data Generation & Model Training Check
-    new_data_generated = check_and_generate_data(req.targetCrop)
-    models_exist = os.path.exists(os.path.join(MODEL_DIR, "suitability_model.pkl"))
-
-    if new_data_generated or not models_exist or suitability_model is None:
-        success = train_models()
-        if not success:
-            return {"error": "The AI is currently generating the dataset or preparing the model. Please click Process again in 10 seconds."}
-        # Reload model into memory after successful training
-        load_suitability_model()
-
-    if suitability_model is None:
-        return {"error": "Critical Error: Model could not be loaded into memory."}
-
-    # 3. Process the nutrients
-    current_n = float(req.calculatedNutrients.get('N', 0))
-    current_p = float(req.calculatedNutrients.get('P', 0))
-    current_k = float(req.calculatedNutrients.get('K', 0))
-
-    try:
-        req_n = float(target_requirements["Min_Nitrogen_ppm"])
-        req_p = float(target_requirements["Min_Phosphorus_ppm"])
-        req_k = float(target_requirements["Min_Potassium_ppm"])
-    except ValueError:
-        return {"error": "Invalid nutrient requirement data retrieved."}
-
-    diff_n = current_n - req_n
-    diff_p = current_p - req_p
-    diff_k = current_k - req_k
-
-    # ML Model Prediction using the in-memory model
-    input_features = pd.DataFrame([[current_n, current_p, current_k, req_n, req_p, req_k]], 
-                                  columns=["Current_N", "Current_P", "Current_K", "Req_N", "Req_P", "Req_K"])
-    
-    ml_is_suitable = bool(suitability_model.predict(input_features)[0])
-
-    def evaluate_nutrient(name, diff):
-        if diff < -5.0:  
-            return "Deficit"
-        elif diff > 5.0:  
-            return "Surplus"
-        return "Stable"
-
-    status_n = evaluate_nutrient("Nitrogen (N)", diff_n)
-    status_p = evaluate_nutrient("Phosphorus (P)", diff_p)
-    status_k = evaluate_nutrient("Potassium (K)", diff_k)
-
-    # 4. Generating remedies through AI if the soil is not suitable
-    ai_remedy_message = ""
-    alternative_suggestions = [] # NEW ARRAY
-    
-    if not ml_is_suitable:
-        ai_remedy_message = get_ai_soil_remedy(req.targetCrop, diff_n, diff_p, diff_k, req.language)
-        print(f"[AI] Generating alternative crops for {req.targetCrop}...")
-        alternative_suggestions = get_ai_alternatives(current_n, current_p, current_k, req.targetCrop, req.language)
+# ---------- Load NPK Predictor Model ----------
+def load_npk_predictor():
+    global npk_model, npk_scaler
+    model_path = os.path.join(MODEL_DIR, "npk_predictor_model.pkl")
+    scaler_path = os.path.join(MODEL_DIR, "npk_predictor_scaler.pkl")
+    if os.path.exists(model_path) and os.path.exists(scaler_path):
+        with open(model_path, "rb") as f:
+            npk_model = pickle.load(f)
+        with open(scaler_path, "rb") as f:
+            npk_scaler = pickle.load(f)
+        print("✅ NPK predictor model loaded.")
+        return True
     else:
-        ai_remedy_message = "Soil is well-suited for this crop! Maintain current nutrient levels with standard agricultural practices."
+        print("⚠️ NPK predictor model not found. Falling back to deterministic calculation.")
+        return False
 
-    # 5. Final Response (Update the return dictionary)
-    return {
-        "targetEvaluation": {
-            "isSuitable": ml_is_suitable,
-            "feedback": [
-                f"Nutrient evaluation complete for target: '{req.targetCrop}'.",
-                "Review the graphs and historical impact data below to see exact soil changes."
-            ],
-            "aiSoilRemedy": ai_remedy_message
-        },
-        "soilNutrientLevels": [
-            {"nutrient": "Nitrogen (N)", "level": f"{current_n} ppm", "depletionPrediction": status_n, "difference": round(diff_n, 2)},
-            {"nutrient": "Phosphorus (P)", "level": f"{current_p} ppm", "depletionPrediction": status_p, "difference": round(diff_p, 2)},
-            {"nutrient": "Potassium (K)", "level": f"{current_k} ppm", "depletionPrediction": status_k, "difference": round(diff_k, 2)}
-        ],
-        "alternativeSuggestions": alternative_suggestions # ADD THIS LINE
-    }
+# ---------- Load Agrochemical Data (once) ----------
+def load_agrochemical_data():
+    global agro_df
+    agro_path = os.path.join(DATA_DIR, "Agrochemical_compounds.csv")
+    if not os.path.exists(agro_path):
+        print("⚠️ Agrochemical CSV missing. ML feature extraction will fallback.")
+        return False
+    df = pd.read_csv(agro_path)
+    # Find N,P,K columns
+    n_col = next((c for c in df.columns if 'nitrogen' in c.lower()), None)
+    p_col = next((c for c in df.columns if 'phosphorus' in c.lower()), None)
+    k_col = next((c for c in df.columns if 'potassium' in c.lower()), None)
+    if not (n_col and p_col and k_col):
+        print("⚠️ Could not find N,P,K columns in agrochemical CSV.")
+        return False
+    df.rename(columns={n_col: 'N', p_col: 'P', k_col: 'K'}, inplace=True)
+    # Find Product_Name column
+    name_col = next((c for c in df.columns if 'product' in c.lower() and 'name' in c.lower()), None)
+    if name_col:
+        df = df.drop_duplicates(subset=[name_col], keep='first')
+        df.set_index(name_col, inplace=True)
+    else:
+        first_col = df.columns[0]
+        df = df.drop_duplicates(subset=[first_col], keep='first')
+        df.set_index(first_col, inplace=True)
+    agro_df = df
+    print(f"✅ Agrochemical composition loaded. {len(agro_df)} unique products.")
+    return True
 
-def get_ai_alternatives(current_n, current_p, current_k, target_crop, language):
-    """Gemini හරහා පවතින පසට ගැලපෙන විකල්ප බෝග 2ක් ලබා ගැනීම"""
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    prompt = f"""
-    The farmer's soil currently has the following nutrient levels based on historical data:
-    Nitrogen (N): {current_n} ppm
-    Phosphorus (P): {current_p} ppm
-    Potassium (K): {current_k} ppm
-
-    The requested crop '{target_crop}' is NOT suitable right now.
-    Recommend exactly TWO alternative crops that THRIVE in these specific nutrient conditions.
-    Explain why they are suitable based specifically on the current N, P, and K levels provided.
-    Provide the response in {language}.
-    
-    Output ONLY a valid JSON array. No markdown, no extra text. Format exactly like this:
-    [
-      {{
-        "cropName": "Alternative Crop 1",
-        "reasons": ["Reason 1 based on soil data", "Reason 2"]
-      }},
-      {{
-        "cropName": "Alternative Crop 2",
-        "reasons": ["Reason 1 based on soil data", "Reason 2"]
-      }}
-    ]
-    """
-    try:
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-        clean_text = response.text.replace('```json', '').replace('```', '').strip()
-        return json.loads(clean_text)
-    except Exception as e:
-        print(f"Alternative AI Error: {e}")
-        return []
-
-    # 5. Final Response
-    return {
-        "targetEvaluation": {
-            "isSuitable": ml_is_suitable,
-            "feedback": [
-                f"Nutrient evaluation complete for target: '{req.targetCrop}'.",
-                "Review the graphs and historical impact data below to see exact soil changes."
-            ],
-            "aiSoilRemedy": ai_remedy_message
-        },
-        "soilNutrientLevels": [
-            {"nutrient": "Nitrogen (N)", "level": f"{current_n} ppm", "depletionPrediction": status_n, "difference": round(diff_n, 2)},
-            {"nutrient": "Phosphorus (P)", "level": f"{current_p} ppm", "depletionPrediction": status_p, "difference": round(diff_p, 2)},
-            {"nutrient": "Potassium (K)", "level": f"{current_k} ppm", "depletionPrediction": status_k, "difference": round(diff_k, 2)}
-        ]
-    }
-
+# ---------- Load Crop Recommendation Models ----------
 def load_crop_rec_models():
-    """මෙමගින් train කර ඇති model එක මතකයට (memory) ලබා ගනී"""
     global crop_rec_model, crop_rec_encoder, crop_rec_mlb
     try:
         with open(os.path.join(MODEL_DIR, "crop_rec_model.pkl"), "rb") as f:
@@ -251,98 +101,271 @@ def load_crop_rec_models():
         return False
 
 def train_crop_recommendation_model():
-    """CSV එක තිබේනම් එයින් Model එක Train කිරීම"""
+    """Train from CSV if exists, otherwise skip."""
     dataset_path = os.path.join(DATA_DIR, "district_suitability_crops.csv")
-    
     if not os.path.exists(dataset_path):
-        return False # CSV එක නැත්නම් skip කරයි (කලින් train කල model එක භාවිතා කරයි)
-        
-    print(f"\n[ML TRAINING] 🧠 district_suitability_crops.csv මගින් Model එක Training වෙමින් පවතී...")
-    
+        return False
+    print(f"\n[ML TRAINING] 🧠 Training crop recommendation model...")
     df = pd.read_csv(dataset_path)
     grouped = df.groupby(['District', 'Month_Name'])['Crop_Name'].apply(list).reset_index()
-    
     X_raw = grouped[['District', 'Month_Name']]
     encoder = OneHotEncoder(handle_unknown='ignore')
     X = encoder.fit_transform(X_raw)
-    
     mlb = MultiLabelBinarizer()
     y = mlb.fit_transform(grouped['Crop_Name'])
-    
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
-    
     with open(os.path.join(MODEL_DIR, "crop_rec_model.pkl"), "wb") as f: pickle.dump(model, f)
     with open(os.path.join(MODEL_DIR, "crop_rec_encoder.pkl"), "wb") as f: pickle.dump(encoder, f)
     with open(os.path.join(MODEL_DIR, "crop_rec_mlb.pkl"), "wb") as f: pickle.dump(mlb, f)
-    
-    print("[ML TRAINING] ✅ Model එක සාර්ථකව Train කර අවසන්! දැන් dataset එක නොමැතිව predictions ලබා දිය හැක.\n")
+    print("[ML TRAINING] ✅ Crop recommendation model trained.")
     return True
 
-# Server එක Start වෙද්දීම Model එක load කරගැනීම හෝ Train කිරීම
+# ---------- Deterministic Fallback NPK Calculation ----------
+def deterministic_calculate_current_npk(baseline, past_crops):
+    current_n = float(baseline.get('N', 50.0))
+    current_p = float(baseline.get('P', 20.0))
+    current_k = float(baseline.get('K', 100.0))
+    chemical_breakdown = [] # Add this array
+
+    months_map = {'January':1, 'February':2, 'March':3, 'April':4, 'May':5, 'June':6,
+                  'July':7, 'August':8, 'September':9, 'October':10, 'November':11, 'December':12}
+    
+    local_agro_df = agro_df
+    if local_agro_df is None:
+        agro_path = os.path.join(DATA_DIR, "Agrochemical_compounds.csv")
+        if os.path.exists(agro_path):
+            try:
+                temp_df = pd.read_csv(agro_path)
+                n_col = next((c for c in temp_df.columns if 'nitrogen' in c.lower()), None)
+                p_col = next((c for c in temp_df.columns if 'phosphorus' in c.lower()), None)
+                k_col = next((c for c in temp_df.columns if 'potassium' in c.lower()), None)
+                if n_col and p_col and k_col:
+                    temp_df.rename(columns={n_col:'N', p_col:'P', k_col:'K'}, inplace=True)
+                    name_col = next((c for c in temp_df.columns if 'product' in c.lower() and 'name' in c.lower()), None)
+                    if name_col:
+                        temp_df = temp_df.drop_duplicates(subset=[name_col], keep='first')
+                        temp_df.set_index(name_col, inplace=True)
+                    local_agro_df = temp_df
+            except Exception as e:
+                print(f"Error loading agro CSV in fallback: {e}")
+
+    for crop in past_crops:
+        try:
+            duration = (int(crop.endYear) - int(crop.startYear)) * 12 + (months_map[crop.endMonth] - months_map[crop.startMonth])
+            duration = max(1, duration)
+        except:
+            duration = 3
+        land = float(crop.landSize) if float(crop.landSize) > 0 else 1.0
+        
+        current_n -= duration * 1.2
+        current_p -= duration * 0.4
+        current_k -= duration * 0.8
+        
+        if local_agro_df is not None:
+            for chem in crop.fertilizers + crop.pesticides:
+                if chem.name in local_agro_df.index:
+                    try:
+                        n_val = local_agro_df.loc[chem.name, 'N']
+                        p_val = local_agro_df.loc[chem.name, 'P']
+                        k_val = local_agro_df.loc[chem.name, 'K']
+                        if isinstance(n_val, pd.Series): n_val = n_val.iloc[0]
+                        if isinstance(p_val, pd.Series): p_val = p_val.iloc[0]
+                        if isinstance(k_val, pd.Series): k_val = k_val.iloc[0]
+                        multiplier = chem.amount_g / 100.0
+                        added_n = (n_val * multiplier) / land
+                        added_p = (p_val * multiplier) / land
+                        added_k = (k_val * multiplier) / land
+                        
+                        current_n += added_n
+                        current_p += added_p
+                        current_k += added_k
+                        
+                        # Store breakdown for UI
+                        chemical_breakdown.append({
+                            "name": chem.name,
+                            "amount_g": chem.amount_g,
+                            "base_100g": {"N": float(n_val), "P": float(p_val), "K": float(k_val)},
+                            "added": {"N": float(added_n), "P": float(added_p), "K": float(added_k)}
+                        })
+                    except Exception as e:
+                        print(f"Warning: Could not add {chem.name}: {e}")
+                        continue
+
+    return max(0, current_n), max(0, current_p), max(0, current_k), chemical_breakdown
+
+# ---------- ML‑based NPK Prediction (preferred) ----------
+def calculate_current_npk(baseline, past_crops):
+    global npk_model, npk_scaler, agro_df
+    
+    if npk_model is None or npk_scaler is None or agro_df is None:
+        print("[WARN] ML model or agro data missing, using deterministic fallback.")
+        return deterministic_calculate_current_npk(baseline, past_crops)
+    
+    total_n_added = 0.0
+    total_p_added = 0.0
+    total_k_added = 0.0
+    total_months = 0
+    chemical_breakdown = [] # Add this array
+    
+    months_map = {'January':1, 'February':2, 'March':3, 'April':4, 'May':5, 'June':6,
+                  'July':7, 'August':8, 'September':9, 'October':10, 'November':11, 'December':12}
+    
+    for crop in past_crops:
+        try:
+            duration = (int(crop.endYear) - int(crop.startYear)) * 12 + (months_map[crop.endMonth] - months_map[crop.startMonth])
+            duration = max(1, duration)
+        except:
+            duration = 3
+        land = float(crop.landSize) if float(crop.landSize) > 0 else 1.0
+        total_months += duration
+        
+        for chem in crop.fertilizers + crop.pesticides:
+            if chem.name in agro_df.index:
+                n_val = agro_df.loc[chem.name, 'N']
+                p_val = agro_df.loc[chem.name, 'P']
+                k_val = agro_df.loc[chem.name, 'K']
+                if isinstance(n_val, pd.Series): n_val = n_val.iloc[0]
+                if isinstance(p_val, pd.Series): p_val = p_val.iloc[0]
+                if isinstance(k_val, pd.Series): k_val = k_val.iloc[0]
+                
+                multiplier = chem.amount_g / 100.0
+                added_n = (n_val * multiplier) / land
+                added_p = (p_val * multiplier) / land
+                added_k = (k_val * multiplier) / land
+                
+                total_n_added += added_n
+                total_p_added += added_p
+                total_k_added += added_k
+                
+                # Store breakdown for UI
+                chemical_breakdown.append({
+                    "name": chem.name,
+                    "amount_g": chem.amount_g,
+                    "base_100g": {"N": float(n_val), "P": float(p_val), "K": float(k_val)},
+                    "added": {"N": float(added_n), "P": float(added_p), "K": float(added_k)}
+                })
+    
+    base_n = baseline.get('N', 50.0)
+    base_p = baseline.get('P', 20.0)
+    base_k = baseline.get('K', 100.0)
+    
+    features = np.array([[base_n, base_p, base_k, total_n_added, total_p_added, total_k_added, total_months]])
+    features_scaled = npk_scaler.transform(features)
+    pred = npk_model.predict(features_scaled)[0]
+    current_n, current_p, current_k = max(0, pred[0]), max(0, pred[1]), max(0, pred[2])
+    return current_n, current_p, current_k, chemical_breakdown
+
+# ---------- Rule‑based Suitability Check ----------
+def is_crop_suitable(current_n, current_p, current_k, requirements):
+    """Returns True if current NPK values are within the required min‑max range."""
+    req_n_min = requirements.get("Min_Nitrogen_ppm", 0)
+    req_n_max = requirements.get("Max_Nitrogen_ppm", 999999)
+    req_p_min = requirements.get("Min_Phosphorus_ppm", 0)
+    req_p_max = requirements.get("Max_Phosphorus_ppm", 999999)
+    req_k_min = requirements.get("Min_Potassium_ppm", 0)
+    req_k_max = requirements.get("Max_Potassium_ppm", 999999)
+    
+    return (req_n_min <= current_n <= req_n_max and
+            req_p_min <= current_p <= req_p_max and
+            req_k_min <= current_k <= req_k_max)
+
+# ---------- Pydantic Models ----------
+class ChemicalItem(BaseModel):
+    name: str
+    amount_g: int
+
+class CropHistory(BaseModel):
+    cropName: str
+    landSize: float
+    startMonth: str
+    startYear: str
+    endMonth: str
+    endYear: str
+    fertilizers: List[ChemicalItem]
+    pesticides: List[ChemicalItem]
+
+class RotationRequest(BaseModel):
+    targetCrop: str
+    targetLandSize: float
+    currentMonth: str
+    previousCrops: List[CropHistory]
+    language: str
+    baselineNutrients: Dict[str, float]
+
+class GuidanceRequest(BaseModel):
+    district: str
+    month: str
+    language: str
+
+# ---------- Start-up Loaders ----------
+load_npk_predictor()
+load_agrochemical_data()
 if not load_crop_rec_models():
     if train_crop_recommendation_model():
         load_crop_rec_models()
 
+# ---------- Endpoints ----------
+@app.post("/predict_npk")
+async def predict_npk(req: RotationRequest):
+    # Unpack the 4 values
+    current_n, current_p, current_k, chemical_breakdown = calculate_current_npk(req.baselineNutrients, req.previousCrops)
+    return {
+        "current_n": float(current_n),
+        "current_p": float(current_p),
+        "current_k": float(current_k),
+        "chemical_breakdown": chemical_breakdown # Send to Node JS
+    }
+
+@app.get("/get_requirements/{crop_name}")
+async def get_requirements(crop_name: str):
+    # Target Crop එකට අදාල දත්ත CSV හෝ AI මගින් ලබා දීම
+    target_requirements = get_or_create_nutrients(crop_name)
+    if not target_requirements:
+        return {"error": "Failed to determine crop requirements."}
+    return target_requirements
+
+# ---------- Crop Recommendation & Steps Endpoints (unchanged) ----------
 @app.post("/recommend_crops")
 async def recommend_crops(req: GuidanceRequest):
     global crop_rec_model, crop_rec_encoder, crop_rec_mlb
-    
-    # Model එක load වී නැත්නම් සහ CSV එකත් නැත්නම් Error එකක් යැවීම
     if crop_rec_model is None:
         if train_crop_recommendation_model():
-             load_crop_rec_models()
+            load_crop_rec_models()
         else:
-             return {"error": "ML Model is not trained and dataset is missing!"}
-    
-    # 1. Dataset එක භාවිතා නොකර ML Model එක මගින් Predictions ලබා ගැනීම
+            return {"error": "ML Model is not trained and dataset is missing!"}
     input_data = pd.DataFrame([{"District": req.district.title(), "Month_Name": req.month.title()}])
-    
     try:
-        # Encoder එක හරහා data සකස් කර Model එකට ලබාදීම
         X_input = crop_rec_encoder.transform(input_data)
         y_pred = crop_rec_model.predict(X_input)
-        
-        # Binary result එක නැවත Crop Names බවට පත් කිරීම
-        predicted_crops = crop_rec_mlb.inverse_transform(y_pred)[0] 
+        predicted_crops = crop_rec_mlb.inverse_transform(y_pred)[0]
     except Exception as e:
         return {"success": False, "message": f"Prediction failed for {req.district}."}
-
     if not predicted_crops:
-         return {"success": False, "message": f"No crops predicted for {req.district} in {req.month}."}
-
+        return {"success": False, "message": f"No crops predicted for {req.district} in {req.month}."}
     recommendations = []
-    
-    # 2. UI එකට අවශ්‍ය Data Format එකට සකස් කිරීම
     for crop in predicted_crops:
-        # CSV එක ඉවත් කර ඇති නිසා, සාමාන්‍ය Reasoning එකක් මෙහිදී එකතු කර ඇත
         reasoning_text = f"Based on ML predictions, {crop} is highly suitable for cultivation in {req.district} during {req.month} considering the seasonal and geographical patterns."
-        
         recommendations.append({
             "cropName": crop,
             "reasoning": reasoning_text,
-            "steps": [] # පියවරයන් Frontend එකෙන් View Steps ඔබන විට load වන නිසා මෙය හිස්ව යවයි
+            "steps": []
         })
-        
     return {"success": True, "data": recommendations}
-
-
 
 @app.get("/get_crop_steps/{crop_name}")
 async def get_crop_steps(crop_name: str, language: str = "English"):
     steps_csv = os.path.join(DATA_DIR, "cultivation_steps.csv")
-    
-    # 1. Checking if the crop exists in an existing CSV
     if os.path.exists(steps_csv):
         df = pd.read_csv(steps_csv).fillna("")
         crop_data = df[df['Crop_Name'].str.lower() == crop_name.lower()]
-        
         if not crop_data.empty:
-            print(f"[INFO] '{crop_name}' සඳහා පියවරයන් cultivation_steps.csv මගින් ලබා ගනී.")
             formatted_steps = []
             for raw in crop_data.to_dict('records'):
-                try: est_days = int(float(raw.get("Estimated_Days", 0)))
-                except: est_days = 0
+                try:
+                    est_days = int(float(raw.get("Estimated_Days", 0)))
+                except:
+                    est_days = 0
                 formatted_steps.append({
                     "stage": str(raw.get("Stage", "")),
                     "instructions": str(raw.get("Instructions", "")),
@@ -350,9 +373,7 @@ async def get_crop_steps(crop_name: str, language: str = "English"):
                     "alert": str(raw.get("Alert", ""))
                 })
             return {"success": True, "steps": formatted_steps}
-
-    # 2. Generating via AI (Gemini) if not in CSV
-    print(f"[AI INFO] '{crop_name}' CSV එකෙහි නොමැත. AI මගින් පියවරයන් ජනනය කරමින් පවතී...")
+    print(f"[AI INFO] Generating steps for '{crop_name}' via AI...")
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     prompt = f"""
     Provide exactly 5 essential cultivation steps for growing '{crop_name}' in {language}.
@@ -365,8 +386,6 @@ async def get_crop_steps(crop_name: str, language: str = "English"):
         response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         clean_text = response.text.replace('```json', '').replace('```', '').strip()
         ai_steps = json.loads(clean_text)
-        
-        # 3. Adding the generated steps to cultivation_steps.csv (Save to CSV)
         new_rows = []
         for step in ai_steps:
             new_rows.append({
@@ -376,17 +395,13 @@ async def get_crop_steps(crop_name: str, language: str = "English"):
                 "Estimated_Days": step.get("estimatedDays", 0),
                 "Alert": step.get("alert", "")
             })
-            
         new_df = pd.DataFrame(new_rows)
-        # If the file does not exist, it will be created, if it exists, it will be appended.
         if not os.path.exists(steps_csv):
             new_df.to_csv(steps_csv, index=False)
         else:
             new_df.to_csv(steps_csv, mode='a', header=False, index=False)
-            
-        print(f"[AI INFO] සාර්ථකයි! '{crop_name}' සඳහා නව දත්ත cultivation_steps.csv හි ගබඩා කරන ලදී.")
+        print(f"[AI INFO] Steps for '{crop_name}' saved to CSV.")
         return {"success": True, "steps": ai_steps}
-        
     except Exception as e:
         print(f"AI Error: {e}")
         return {"success": False, "message": "Failed to generate steps via AI."}
