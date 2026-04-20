@@ -11,6 +11,8 @@
   "rainfall_total",
   "rain_sum",
   "wind_max",
+  "inflation_rate",
+  "inflation_mom_change",
   "lag_1",
   "lag_2",
   "lag_3",

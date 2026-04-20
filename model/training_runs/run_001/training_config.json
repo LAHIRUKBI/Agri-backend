@@ -1,6 +1,6 @@
 {
   "run_id": "run_001",
-  "input_dataset": "D:\\Reaserch\\Agri-backend\\datasets\\interim\\final_dataset_with_weather.csv",
+  "input_dataset": "D:\\Reaserch\\Agri-backend\\datasets\\interim\\final_dataset_with_weather_inflation.csv",
   "processed_dataset": "D:\\Reaserch\\Agri-backend\\datasets\\processed\\train_ready_dataset.csv",
   "stable_threshold": 0.05,
   "target_definition": {

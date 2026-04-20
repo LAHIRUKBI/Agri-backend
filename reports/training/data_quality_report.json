@@ -1,6 +1,6 @@
 {
   "row_count": 18965,
-  "column_count": 24,
+  "column_count": 26,
   "columns": [
     "date",
     "year",
@@ -25,7 +25,9 @@
     "temp_mean",
     "rainfall_total",
     "rain_sum",
-    "wind_max"
+    "wind_max",
+    "inflation_rate",
+    "inflation_mom_change"
   ],
   "missing_counts": {
     "date": 0,
@@ -51,7 +53,9 @@
     "temp_mean": 0,
     "rainfall_total": 0,
     "rain_sum": 0,
-    "wind_max": 0
+    "wind_max": 0,
+    "inflation_rate": 0,
+    "inflation_mom_change": 0
   },
   "duplicate_rows": 0,
   "required_columns_present": {
@@ -241,6 +245,26 @@
       "50%": 13.6260315447435,
       "75%": 13.6260315447435,
       "max": 25.285714285714285
+    },
+    "inflation_rate": {
+      "count": 18965.0,
+      "mean": 14.604815451779332,
+      "std": 18.991200947472727,
+      "min": -2.1,
+      "25%": 3.9,
+      "50%": 5.9,
+      "75%": 14.604815451779334,
+      "max": 69.8
+    },
+    "inflation_mom_change": {
+      "count": 18965.0,
+      "mean": -0.2606169259161612,
+      "std": 7.952284718848359,
+      "min": -50.8,
+      "25%": -0.2999999999999998,
+      "50%": 0.0,
+      "75%": 0.7,
+      "max": 15.5
     }
   },
   "warnings": []

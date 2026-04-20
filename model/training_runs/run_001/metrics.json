@@ -1,9 +1,9 @@
 {
-  "accuracy": 0.6889818688981869,
-  "precision_macro": 0.6886407822381385,
-  "recall_macro": 0.6883270768839815,
-  "f1_macro": 0.6884180577647755,
-  "cv_f1_macro_mean": 0.6927471781546536,
-  "cv_f1_macro_std": 0.0028389768159139362,
-  "classification_report": "              precision    recall  f1-score   support\n\n           0       0.68      0.67      0.68      1387\n           1       0.70      0.71      0.70      1481\n\n    accuracy                           0.69      2868\n   macro avg       0.69      0.69      0.69      2868\nweighted avg       0.69      0.69      0.69      2868\n"
+  "accuracy": 0.706415620641562,
+  "precision_macro": 0.7060962482414622,
+  "recall_macro": 0.705893979350066,
+  "f1_macro": 0.7059672124760132,
+  "cv_f1_macro_mean": 0.7099045914104499,
+  "cv_f1_macro_std": 0.0017070469688506913,
+  "classification_report": "              precision    recall  f1-score   support\n\n           0       0.70      0.69      0.69      1387\n           1       0.71      0.72      0.72      1481\n\n    accuracy                           0.71      2868\n   macro avg       0.71      0.71      0.71      2868\nweighted avg       0.71      0.71      0.71      2868\n"
 }

@@ -11,6 +11,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 HISTORY_PATH = BASE_DIR / "datasets" / "interim" / "final_dataset.csv"
 FEATURE_COLUMNS_PATH = BASE_DIR / "model" / "training_runs" / "run_001" / "feature_columns.json"
 WEATHER_PATH = BASE_DIR / "datasets" / "interim" / "weekly_weather.csv"
+INFLATION_PATH = BASE_DIR / "datasets" / "interim" / "weekly_inflation.csv"
 
 
 def load_history() -> pd.DataFrame:
@@ -20,6 +21,11 @@ def load_history() -> pd.DataFrame:
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Historical dataset missing columns: {missing}")
+
+    df["crop"] = df["crop"].astype(str).str.strip().str.lower()
+    df["district"] = df["district"].astype(str).str.strip().str.lower()
+    df["market"] = df["market"].astype(str).str.strip().str.lower()
+    df["season"] = df["season"].astype(str).str.strip()
 
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["month"] = pd.to_numeric(df["month"], errors="coerce")
@@ -48,15 +54,30 @@ def load_weather() -> pd.DataFrame:
 
     df = df.dropna(subset=["district", "year", "week_number"]).copy()
 
-    # Fill weather numeric gaps safely
-    if "temp_mean" in df.columns:
-        df["temp_mean"] = df["temp_mean"].fillna(df["temp_mean"].mean())
-    if "rainfall_total" in df.columns:
-        df["rainfall_total"] = df["rainfall_total"].fillna(0)
-    if "rain_sum" in df.columns:
-        df["rain_sum"] = df["rain_sum"].fillna(0)
-    if "wind_max" in df.columns:
-        df["wind_max"] = df["wind_max"].fillna(df["wind_max"].mean())
+    df["temp_mean"] = df["temp_mean"].fillna(df["temp_mean"].mean())
+    df["rainfall_total"] = df["rainfall_total"].fillna(0)
+    df["rain_sum"] = df["rain_sum"].fillna(0)
+    df["wind_max"] = df["wind_max"].fillna(df["wind_max"].mean())
+
+    return df
+
+
+def load_inflation() -> pd.DataFrame:
+    df = pd.read_csv(INFLATION_PATH)
+
+    required = ["year", "month", "week_number", "inflation_rate", "inflation_mom_change"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Weekly inflation dataset missing columns: {missing}")
+
+    df["year"] = pd.to_numeric(df["year"], errors="coerce")
+    df["month"] = pd.to_numeric(df["month"], errors="coerce")
+    df["week_number"] = pd.to_numeric(df["week_number"], errors="coerce")
+    df["inflation_rate"] = pd.to_numeric(df["inflation_rate"], errors="coerce")
+    df["inflation_mom_change"] = pd.to_numeric(df["inflation_mom_change"], errors="coerce")
+
+    df["inflation_rate"] = df["inflation_rate"].fillna(df["inflation_rate"].mean())
+    df["inflation_mom_change"] = df["inflation_mom_change"].fillna(0)
 
     return df
 
@@ -71,30 +92,24 @@ def _find_history_subset(
     district: str,
     market: str | None = None,
 ) -> pd.DataFrame:
-    # Level 1: crop + district
+    crop = str(crop).strip().lower()
+    district = str(district).strip().lower()
+    market_norm = str(market).strip().lower() if market else None
+
     subset_cd = history_df[
-        (history_df["crop"].astype(str).str.strip().str.lower() == str(crop).strip().lower()) &
-        (history_df["district"].astype(str).str.strip().str.lower() == str(district).strip().lower())
+        (history_df["crop"] == crop) &
+        (history_df["district"] == district)
     ].copy()
 
-    # Try exact market first
-    if market:
-        subset_cdm = subset_cd[
-            subset_cd["market"].astype(str).str.strip().str.lower() == str(market).strip().lower()
-        ].copy()
-
+    if market_norm:
+        subset_cdm = subset_cd[subset_cd["market"] == market_norm].copy()
         if len(subset_cdm) >= 4:
             return _sort_history(subset_cdm)
 
-    # Fallback: crop + district
     if len(subset_cd) >= 4:
         return _sort_history(subset_cd)
 
-    # Fallback: crop only
-    subset_c = history_df[
-        history_df["crop"].astype(str).str.strip().str.lower() == str(crop).strip().lower()
-    ].copy()
-
+    subset_c = history_df[history_df["crop"] == crop].copy()
     if len(subset_c) >= 4:
         return _sort_history(subset_c)
 
@@ -131,10 +146,10 @@ def _cyclical_week(week_number: int) -> tuple[float, float]:
 
 
 def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Dict:
-    crop = payload["crop"]
-    district = payload["district"]
-    market = payload.get("market")
-    season = payload.get("season", "Unknown")
+    crop = str(payload["crop"]).strip().lower()
+    district = str(payload["district"]).strip().lower()
+    market = str(payload.get("market", "unknown")).strip().lower()
+    season = str(payload.get("season", "Unknown")).strip()
     year = int(payload["year"])
     month = int(payload["month"])
     week_number = int(payload["week_number"])
@@ -176,14 +191,14 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Dict:
     week_sin, week_cos = _cyclical_week(week_number)
 
     feature_row = {
-        "crop": crop,
-        "district": district,
-        "market": market if market else "unknown",
-        "season": season,
         "year": year,
         "month": month,
         "week_number": week_number,
+        "district": district,
+        "market": market,
+        "crop": crop,
         "price_rs_kg": price_rs_kg,
+        "season": season,
         "lag_1": lag_1,
         "lag_2": lag_2,
         "lag_3": lag_3,
@@ -209,9 +224,8 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Dict:
     }
 
     weather_df = load_weather()
-
     weather_row = weather_df[
-        (weather_df["district"].astype(str).str.strip().str.lower() == str(district).strip().lower()) &
+        (weather_df["district"] == district) &
         (weather_df["year"] == year) &
         (weather_df["week_number"] == week_number)
     ]
@@ -228,11 +242,28 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Dict:
         rain_sum = 0.0
         wind_max = 0.0
 
+    inflation_df = load_inflation()
+    inflation_row = inflation_df[
+        (inflation_df["year"] == year) &
+        (inflation_df["month"] == month) &
+        (inflation_df["week_number"] == week_number)
+    ]
+
+    if len(inflation_row) > 0:
+        inflation_row = inflation_row.iloc[0]
+        inflation_rate = float(inflation_row["inflation_rate"])
+        inflation_mom_change = float(inflation_row["inflation_mom_change"])
+    else:
+        inflation_rate = 0.0
+        inflation_mom_change = 0.0
+
     feature_row.update({
         "temp_mean": temp_mean,
         "rainfall_total": rainfall_total,
         "rain_sum": rain_sum,
         "wind_max": wind_max,
+        "inflation_rate": inflation_rate,
+        "inflation_mom_change": inflation_mom_change,
     })
 
     return feature_row
