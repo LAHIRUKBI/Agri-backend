@@ -1,6 +1,6 @@
 {
   "row_count": 18965,
-  "column_count": 20,
+  "column_count": 24,
   "columns": [
     "date",
     "year",
@@ -21,7 +21,11 @@
     "seasonal_extent_ha",
     "seasonal_production_t",
     "seasonal_yield_t_per_ha",
-    "agstat_source_used"
+    "agstat_source_used",
+    "temp_mean",
+    "rainfall_total",
+    "rain_sum",
+    "wind_max"
   ],
   "missing_counts": {
     "date": 0,
@@ -43,7 +47,11 @@
     "seasonal_extent_ha": 17935,
     "seasonal_production_t": 17935,
     "seasonal_yield_t_per_ha": 17935,
-    "agstat_source_used": 0
+    "agstat_source_used": 0,
+    "temp_mean": 0,
+    "rainfall_total": 0,
+    "rain_sum": 0,
+    "wind_max": 0
   },
   "duplicate_rows": 0,
   "required_columns_present": {
@@ -193,6 +201,46 @@
       "50%": 5.55314474,
       "75%": 6.122425629,
       "max": 6.601131299
+    },
+    "temp_mean": {
+      "count": 18965.0,
+      "mean": 25.492524988497816,
+      "std": 0.9240692358110799,
+      "min": 20.2,
+      "25%": 25.492524988497816,
+      "50%": 25.492524988497816,
+      "75%": 25.492524988497816,
+      "max": 29.485714285714288
+    },
+    "rainfall_total": {
+      "count": 18965.0,
+      "mean": 9.06835222778803,
+      "std": 27.14026051894163,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 0.0,
+      "75%": 0.0,
+      "max": 273.3
+    },
+    "rain_sum": {
+      "count": 18965.0,
+      "mean": 9.06835222778803,
+      "std": 27.14026051894163,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 0.0,
+      "75%": 0.0,
+      "max": 273.3
+    },
+    "wind_max": {
+      "count": 18965.0,
+      "mean": 13.6260315447435,
+      "std": 1.9137609992386955,
+      "min": 5.614285714285714,
+      "25%": 13.6260315447435,
+      "50%": 13.6260315447435,
+      "75%": 13.6260315447435,
+      "max": 25.285714285714285
     }
   },
   "warnings": []

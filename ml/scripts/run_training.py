@@ -15,7 +15,7 @@ from ml.src.utils.io_utils import ensure_dir, read_csv, save_csv, save_json
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-INPUT_DATASET = BASE_DIR / "datasets" / "interim" / "final_dataset.csv"
+INPUT_DATASET = BASE_DIR / "datasets" / "interim" / "final_dataset_with_weather.csv"
 PROCESSED_DIR = BASE_DIR / "datasets" / "processed"
 REPORTS_DIR = BASE_DIR / "reports" / "training"
 MODEL_ROOT = BASE_DIR / "model" / "training_runs"
