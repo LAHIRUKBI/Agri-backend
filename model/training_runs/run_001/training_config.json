@@ -1,0 +1,13 @@
+{
+  "run_id": "run_001",
+  "input_dataset": "D:\\Reaserch\\Agri-backend\\datasets\\interim\\final_dataset.csv",
+  "processed_dataset": "D:\\Reaserch\\Agri-backend\\datasets\\processed\\train_ready_dataset.csv",
+  "stable_threshold": 0.05,
+  "target_definition": {
+    "DOWN": "pct_change < -stable_threshold",
+    "STABLE": "-stable_threshold <= pct_change <= stable_threshold",
+    "UP": "pct_change > stable_threshold"
+  },
+  "train_test_split": "80/20 stratified",
+  "model": "RandomForestClassifier"
+}

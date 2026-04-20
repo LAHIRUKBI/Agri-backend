@@ -1,0 +1,199 @@
+{
+  "row_count": 18965,
+  "column_count": 20,
+  "columns": [
+    "date",
+    "year",
+    "month",
+    "week_number",
+    "district",
+    "market",
+    "crop",
+    "price_rs_kg",
+    "season",
+    "season_encoded",
+    "extent_ha",
+    "production_t",
+    "yield_t_per_ha",
+    "annual_extent_ha",
+    "annual_production_t",
+    "annual_yield_t_per_ha",
+    "seasonal_extent_ha",
+    "seasonal_production_t",
+    "seasonal_yield_t_per_ha",
+    "agstat_source_used"
+  ],
+  "missing_counts": {
+    "date": 0,
+    "year": 0,
+    "month": 0,
+    "week_number": 0,
+    "district": 0,
+    "market": 0,
+    "crop": 0,
+    "price_rs_kg": 0,
+    "season": 0,
+    "season_encoded": 0,
+    "extent_ha": 0,
+    "production_t": 0,
+    "yield_t_per_ha": 0,
+    "annual_extent_ha": 1636,
+    "annual_production_t": 1636,
+    "annual_yield_t_per_ha": 1636,
+    "seasonal_extent_ha": 17935,
+    "seasonal_production_t": 17935,
+    "seasonal_yield_t_per_ha": 17935,
+    "agstat_source_used": 0
+  },
+  "duplicate_rows": 0,
+  "required_columns_present": {
+    "price_rs_kg": true,
+    "crop": true,
+    "district": true,
+    "market": true,
+    "week_number": true
+  },
+  "numeric_summary": {
+    "year": {
+      "count": 18965.0,
+      "mean": 2021.7663063538096,
+      "std": 1.6884577482443026,
+      "min": 2019.0,
+      "25%": 2020.0,
+      "50%": 2022.0,
+      "75%": 2023.0,
+      "max": 2024.0
+    },
+    "month": {
+      "count": 18965.0,
+      "mean": 6.461798049037701,
+      "std": 3.459665842132427,
+      "min": 1.0,
+      "25%": 3.0,
+      "50%": 7.0,
+      "75%": 9.0,
+      "max": 12.0
+    },
+    "week_number": {
+      "count": 18965.0,
+      "mean": 26.692275243870288,
+      "std": 15.046023955378056,
+      "min": 1.0,
+      "25%": 13.0,
+      "50%": 27.0,
+      "75%": 40.0,
+      "max": 52.0
+    },
+    "price_rs_kg": {
+      "count": 18965.0,
+      "mean": 195.46413967974533,
+      "std": 153.8108574264883,
+      "min": 6.8,
+      "25%": 92.0,
+      "50%": 152.0,
+      "75%": 254.0,
+      "max": 2030.0
+    },
+    "season_encoded": {
+      "count": 18965.0,
+      "mean": 0.49891906142894804,
+      "std": 0.5000120142386624,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 0.0,
+      "75%": 1.0,
+      "max": 1.0
+    },
+    "extent_ha": {
+      "count": 18965.0,
+      "mean": 6843.698760875297,
+      "std": 3342.8130887692478,
+      "min": 2361.0,
+      "25%": 4214.0,
+      "50%": 5893.0,
+      "75%": 9877.0,
+      "max": 14383.0
+    },
+    "production_t": {
+      "count": 18965.0,
+      "mean": 84627.552596889,
+      "std": 30183.55171676103,
+      "min": 27178.0,
+      "25%": 66422.0,
+      "50%": 80767.0,
+      "75%": 106795.0,
+      "max": 141882.0
+    },
+    "yield_t_per_ha": {
+      "count": 18965.0,
+      "mean": 14.1728890060638,
+      "std": 6.013815737122928,
+      "min": 5.21,
+      "25%": 10.6,
+      "50%": 12.77,
+      "75%": 14.95,
+      "max": 28.07
+    },
+    "annual_extent_ha": {
+      "count": 17329.0,
+      "mean": 6318.491776790352,
+      "std": 3000.969567767869,
+      "min": 2361.0,
+      "25%": 4153.0,
+      "50%": 5737.0,
+      "75%": 7695.0,
+      "max": 14383.0
+    },
+    "annual_production_t": {
+      "count": 17329.0,
+      "mean": 86168.10866178083,
+      "std": 31093.21199384159,
+      "min": 27178.0,
+      "25%": 66422.0,
+      "50%": 88081.0,
+      "75%": 110150.0,
+      "max": 141882.0
+    },
+    "annual_yield_t_per_ha": {
+      "count": 17329.0,
+      "mean": 14.99082850310797,
+      "std": 5.638796366746801,
+      "min": 5.385243252,
+      "25%": 11.57782813,
+      "50%": 13.27585619,
+      "75%": 18.61880342,
+      "max": 28.07055141
+    },
+    "seasonal_extent_ha": {
+      "count": 1030.0,
+      "mean": 5883.294174757281,
+      "std": 1068.0587313942667,
+      "min": 4370.0,
+      "25%": 5093.0,
+      "50%": 5834.0,
+      "75%": 6611.0,
+      "max": 7282.0
+    },
+    "seasonal_production_t": {
+      "count": 1030.0,
+      "mean": 33056.639805825245,
+      "std": 5966.853258862401,
+      "min": 26200.0,
+      "25%": 26755.0,
+      "50%": 33838.0,
+      "75%": 38511.0,
+      "max": 40438.0
+    },
+    "seasonal_yield_t_per_ha": {
+      "count": 1030.0,
+      "mean": 5.646283547582524,
+      "std": 0.5453342997547868,
+      "min": 5.118438965,
+      "25%": 5.144315727,
+      "50%": 5.55314474,
+      "75%": 6.122425629,
+      "max": 6.601131299
+    }
+  },
+  "warnings": []
+}
