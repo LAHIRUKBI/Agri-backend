@@ -8,30 +8,40 @@ exports.predictPriceDirection = async (req, res) => {
       crop,
       district,
       market,
-      season,
-      year,
-      month,
-      week_number,
       price_rs_kg,
+      horizon,
     } = req.body;
 
-    if (
-      !crop ||
-      !district ||
-      !market ||
-      !season ||
-      year == null ||
-      month == null ||
-      week_number == null ||
-      price_rs_kg == null
-    ) {
+    if (!crop || !district || !market || price_rs_kg == null) {
       return res.status(400).json({
         success: false,
         message: "Missing required prediction fields",
       });
     }
 
-    const response = await axios.post(`${ML_API_URL}/predict`, req.body, {
+    if (Number(price_rs_kg) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "price_rs_kg must be greater than 0",
+      });
+    }
+
+    if (horizon != null && ![1, 2, 3, 4].includes(Number(horizon))) {
+      return res.status(400).json({
+        success: false,
+        message: "horizon must be 1, 2, 3, or 4",
+      });
+    }
+
+    const payload = {
+      crop,
+      district,
+      market,
+      price_rs_kg: Number(price_rs_kg),
+      horizon: horizon ? Number(horizon) : 1,
+    };
+
+    const response = await axios.post(`${ML_API_URL}/predict`, payload, {
       headers: { "Content-Type": "application/json" },
       timeout: 15000,
     });

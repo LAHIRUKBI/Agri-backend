@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -12,6 +13,23 @@ HISTORY_PATH = BASE_DIR / "datasets" / "interim" / "final_dataset.csv"
 FEATURE_COLUMNS_PATH = BASE_DIR / "model" / "training_runs" / "run_001" / "feature_columns.json"
 WEATHER_PATH = BASE_DIR / "datasets" / "interim" / "weekly_weather.csv"
 INFLATION_PATH = BASE_DIR / "datasets" / "interim" / "weekly_inflation.csv"
+
+
+def get_future_date(horizon_weeks: int) -> tuple[int, int, int]:
+    today = datetime.today()
+    future_date = today + timedelta(weeks=horizon_weeks)
+
+    year = future_date.year
+    month = future_date.month
+    week_number = future_date.isocalendar()[1]
+
+    return year, month, week_number
+
+
+def get_season(month: int) -> str:
+    if month in [5, 6, 7, 8]:
+        return "Yala"
+    return "Maha"
 
 
 def load_history() -> pd.DataFrame:
@@ -145,15 +163,15 @@ def _cyclical_week(week_number: int) -> tuple[float, float]:
     return float(np.sin(2 * np.pi * week_number / 52)), float(np.cos(2 * np.pi * week_number / 52))
 
 
-def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Dict:
+def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dict, Dict]:
     crop = str(payload["crop"]).strip().lower()
     district = str(payload["district"]).strip().lower()
     market = str(payload.get("market", "unknown")).strip().lower()
-    season = str(payload.get("season", "Unknown")).strip()
-    year = int(payload["year"])
-    month = int(payload["month"])
-    week_number = int(payload["week_number"])
     price_rs_kg = float(payload["price_rs_kg"])
+    horizon = int(payload.get("horizon", 1))
+
+    year, month, week_number = get_future_date(horizon)
+    season = get_season(month)
 
     subset = _find_history_subset(history_df, crop=crop, district=district, market=market)
     past_rows = _take_past_rows(subset, year=year, week_number=week_number, limit=4)
@@ -266,4 +284,12 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Dict:
         "inflation_mom_change": inflation_mom_change,
     })
 
-    return feature_row
+    meta = {
+        "year": year,
+        "month": month,
+        "week_number": week_number,
+        "season": season,
+        "horizon": horizon,
+    }
+
+    return feature_row, meta
