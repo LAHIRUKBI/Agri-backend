@@ -48,6 +48,10 @@ def predict(request: PredictRequest):
         return {
             "prediction": label_map[int(prediction_encoded)],
             "probabilities": probability_map,
+            "source_type": meta.get("source_type"),
+            "history_basis": meta.get("history_basis"),
+            "is_market_specific": meta.get("is_market_specific"),
+            "fallback_used": meta.get("fallback_used"),
             "meta": meta,
         }
     except Exception as e:

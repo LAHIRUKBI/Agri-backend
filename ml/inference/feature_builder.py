@@ -109,29 +109,98 @@ def _find_history_subset(
     crop: str,
     district: str,
     market: str | None = None,
-) -> pd.DataFrame:
+) -> Tuple[pd.DataFrame, Dict]:
     crop = str(crop).strip().lower()
     district = str(district).strip().lower()
     market_norm = str(market).strip().lower() if market else None
 
+    subset_c = history_df[history_df["crop"] == crop].copy()
     subset_cd = history_df[
         (history_df["crop"] == crop) &
         (history_df["district"] == district)
     ].copy()
 
+    market_rows = 0
     if market_norm:
         subset_cdm = subset_cd[subset_cd["market"] == market_norm].copy()
+        market_rows = len(subset_cdm)
         if len(subset_cdm) >= 4:
-            return _sort_history(subset_cdm)
+            return _sort_history(subset_cdm), {
+                "history_basis": "exact_market",
+                "source_type": "exact_market",
+                "is_market_specific": True,
+                "fallback_used": False,
+                "requested_crop": crop,
+                "requested_district": district,
+                "requested_market": market_norm,
+                "history_rows_available": len(subset_cdm),
+                "exact_market_rows_available": market_rows,
+                "district_rows_available": len(subset_cd),
+                "crop_rows_available": len(subset_c),
+            }
+
+        subset_cm = history_df[
+            (history_df["crop"] == crop) &
+            (history_df["market"] == market_norm)
+        ].copy()
+        if len(subset_cm) >= 4:
+            return _sort_history(subset_cm), {
+                "history_basis": "market_fallback",
+                "source_type": "market_fallback",
+                "is_market_specific": True,
+                "fallback_used": True,
+                "requested_crop": crop,
+                "requested_district": district,
+                "requested_market": market_norm,
+                "history_rows_available": len(subset_cm),
+                "exact_market_rows_available": market_rows,
+                "district_rows_available": len(subset_cd),
+                "crop_rows_available": len(subset_c),
+            }
 
     if len(subset_cd) >= 4:
-        return _sort_history(subset_cd)
+        return _sort_history(subset_cd), {
+            "history_basis": "district_fallback",
+            "source_type": "district_fallback",
+            "is_market_specific": False,
+            "fallback_used": True,
+            "requested_crop": crop,
+            "requested_district": district,
+            "requested_market": market_norm,
+            "history_rows_available": len(subset_cd),
+            "exact_market_rows_available": market_rows,
+            "district_rows_available": len(subset_cd),
+            "crop_rows_available": len(subset_c),
+        }
 
-    subset_c = history_df[history_df["crop"] == crop].copy()
     if len(subset_c) >= 4:
-        return _sort_history(subset_c)
+        return _sort_history(subset_c), {
+            "history_basis": "crop_fallback",
+            "source_type": "crop_fallback",
+            "is_market_specific": False,
+            "fallback_used": True,
+            "requested_crop": crop,
+            "requested_district": district,
+            "requested_market": market_norm,
+            "history_rows_available": len(subset_c),
+            "exact_market_rows_available": market_rows,
+            "district_rows_available": len(subset_cd),
+            "crop_rows_available": len(subset_c),
+        }
 
-    return pd.DataFrame(columns=history_df.columns)
+    return pd.DataFrame(columns=history_df.columns), {
+        "history_basis": "none",
+        "source_type": "none",
+        "is_market_specific": False,
+        "fallback_used": True,
+        "requested_crop": crop,
+        "requested_district": district,
+        "requested_market": market_norm,
+        "history_rows_available": 0,
+        "exact_market_rows_available": market_rows,
+        "district_rows_available": len(subset_cd),
+        "crop_rows_available": len(subset_c),
+    }
 
 
 def _take_past_rows(
@@ -147,6 +216,34 @@ def _take_past_rows(
 
     past = past.sort_values(by=["year", "week_number", "market"])
     return past.tail(limit).reset_index(drop=True)
+
+
+def _latest_market_price(
+    history_df: pd.DataFrame,
+    crop: str,
+    district: str,
+    market: str,
+) -> Tuple[float | None, str | None]:
+    subset_cdm = history_df[
+        (history_df["crop"] == crop) &
+        (history_df["district"] == district) &
+        (history_df["market"] == market)
+    ].copy()
+
+    if len(subset_cdm) > 0:
+        latest = subset_cdm.sort_values(by=["year", "week_number"]).iloc[-1]
+        return float(latest["price_rs_kg"]), "crop_district_market"
+
+    subset_cm = history_df[
+        (history_df["crop"] == crop) &
+        (history_df["market"] == market)
+    ].copy()
+
+    if len(subset_cm) > 0:
+        latest = subset_cm.sort_values(by=["year", "week_number", "district"]).iloc[-1]
+        return float(latest["price_rs_kg"]), "crop_market"
+
+    return None, None
 
 
 def _safe_std(values: List[float]) -> float:
@@ -173,7 +270,7 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dic
     year, month, week_number = get_future_date(horizon)
     season = get_season(month)
 
-    subset = _find_history_subset(history_df, crop=crop, district=district, market=market)
+    subset, history_meta = _find_history_subset(history_df, crop=crop, district=district, market=market)
     past_rows = _take_past_rows(subset, year=year, week_number=week_number, limit=4)
 
     if len(past_rows) < 4:
@@ -186,6 +283,7 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dic
 
     prices = past_rows["price_rs_kg"].tolist()
     lag_4, lag_3, lag_2, lag_1 = [float(x) for x in prices]
+    history_markets = sorted(past_rows["market"].astype(str).str.strip().str.lower().unique().tolist())
 
     rolling_mean_2 = float(np.mean([lag_1, lag_2]))
     rolling_mean_4 = float(np.mean([lag_1, lag_2, lag_3, lag_4]))
@@ -284,12 +382,27 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dic
         "inflation_mom_change": inflation_mom_change,
     })
 
+    latest_market_price, latest_market_price_source = _latest_market_price(
+        history_df,
+        crop=crop,
+        district=district,
+        market=market,
+    )
+
     meta = {
         "year": year,
         "month": month,
         "week_number": week_number,
         "season": season,
         "horizon": horizon,
+        **history_meta,
+        "history_rows_used": len(past_rows),
+        "past_rows_used": len(past_rows),
+        "history_markets_used": history_markets,
+        "latest_history_price_rs_kg": lag_1,
+        "latest_market_price_rs_kg": latest_market_price,
+        "latest_market_price_source": latest_market_price_source,
+        "input_price_rs_kg": price_rs_kg,
     }
 
     return feature_row, meta
