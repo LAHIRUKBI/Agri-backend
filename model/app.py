@@ -35,7 +35,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # ---------- Global ML models ----------
 npk_model = None
 npk_scaler = None
-agro_df = None               # loaded once at startup
+chem_dict = None               # loaded once at startup
 crop_rec_model = None
 crop_rec_encoder = None
 crop_rec_mlb = None
@@ -58,32 +58,16 @@ def load_npk_predictor():
 
 # ---------- Load Agrochemical Data (once) ----------
 def load_agrochemical_data():
-    global agro_df
-    agro_path = os.path.join(DATA_DIR, "Agrochemical_compounds.csv")
-    if not os.path.exists(agro_path):
-        print("⚠️ Agrochemical CSV missing. ML feature extraction will fallback.")
-        return False
-    df = pd.read_csv(agro_path)
-    # Find N,P,K columns
-    n_col = next((c for c in df.columns if 'nitrogen' in c.lower()), None)
-    p_col = next((c for c in df.columns if 'phosphorus' in c.lower()), None)
-    k_col = next((c for c in df.columns if 'potassium' in c.lower()), None)
-    if not (n_col and p_col and k_col):
-        print("⚠️ Could not find N,P,K columns in agrochemical CSV.")
-        return False
-    df.rename(columns={n_col: 'N', p_col: 'P', k_col: 'K'}, inplace=True)
-    # Find Product_Name column
-    name_col = next((c for c in df.columns if 'product' in c.lower() and 'name' in c.lower()), None)
-    if name_col:
-        df = df.drop_duplicates(subset=[name_col], keep='first')
-        df.set_index(name_col, inplace=True)
+    global chem_dict
+    dict_path = os.path.join(MODEL_DIR, "chemical_composition.pkl")
+    if os.path.exists(dict_path):
+        with open(dict_path, "rb") as f:
+            chem_dict = pickle.load(f)
+        print(f"✅ Agrochemical composition dictionary loaded. {len(chem_dict)} products.")
+        return True
     else:
-        first_col = df.columns[0]
-        df = df.drop_duplicates(subset=[first_col], keep='first')
-        df.set_index(first_col, inplace=True)
-    agro_df = df
-    print(f"✅ Agrochemical composition loaded. {len(agro_df)} unique products.")
-    return True
+        print("⚠️ Chemical composition dictionary missing.")
+        return False
 
 # ---------- Load Crop Recommendation Models ----------
 def load_crop_rec_models():
@@ -122,91 +106,18 @@ def train_crop_recommendation_model():
     return True
 
 # ---------- Deterministic Fallback NPK Calculation ----------
-def deterministic_calculate_current_npk(baseline, past_crops):
-    current_n = float(baseline.get('N', 50.0))
-    current_p = float(baseline.get('P', 20.0))
-    current_k = float(baseline.get('K', 100.0))
-    chemical_breakdown = [] # Add this array
-
-    months_map = {'January':1, 'February':2, 'March':3, 'April':4, 'May':5, 'June':6,
-                  'July':7, 'August':8, 'September':9, 'October':10, 'November':11, 'December':12}
-    
-    local_agro_df = agro_df
-    if local_agro_df is None:
-        agro_path = os.path.join(DATA_DIR, "Agrochemical_compounds.csv")
-        if os.path.exists(agro_path):
-            try:
-                temp_df = pd.read_csv(agro_path)
-                n_col = next((c for c in temp_df.columns if 'nitrogen' in c.lower()), None)
-                p_col = next((c for c in temp_df.columns if 'phosphorus' in c.lower()), None)
-                k_col = next((c for c in temp_df.columns if 'potassium' in c.lower()), None)
-                if n_col and p_col and k_col:
-                    temp_df.rename(columns={n_col:'N', p_col:'P', k_col:'K'}, inplace=True)
-                    name_col = next((c for c in temp_df.columns if 'product' in c.lower() and 'name' in c.lower()), None)
-                    if name_col:
-                        temp_df = temp_df.drop_duplicates(subset=[name_col], keep='first')
-                        temp_df.set_index(name_col, inplace=True)
-                    local_agro_df = temp_df
-            except Exception as e:
-                print(f"Error loading agro CSV in fallback: {e}")
-
-    for crop in past_crops:
-        try:
-            duration = (int(crop.endYear) - int(crop.startYear)) * 12 + (months_map[crop.endMonth] - months_map[crop.startMonth])
-            duration = max(1, duration)
-        except:
-            duration = 3
-        land = float(crop.landSize) if float(crop.landSize) > 0 else 1.0
-        
-        current_n -= duration * 1.2
-        current_p -= duration * 0.4
-        current_k -= duration * 0.8
-        
-        if local_agro_df is not None:
-            for chem in crop.fertilizers + crop.pesticides:
-                if chem.name in local_agro_df.index:
-                    try:
-                        n_val = local_agro_df.loc[chem.name, 'N']
-                        p_val = local_agro_df.loc[chem.name, 'P']
-                        k_val = local_agro_df.loc[chem.name, 'K']
-                        if isinstance(n_val, pd.Series): n_val = n_val.iloc[0]
-                        if isinstance(p_val, pd.Series): p_val = p_val.iloc[0]
-                        if isinstance(k_val, pd.Series): k_val = k_val.iloc[0]
-                        multiplier = chem.amount_g / 100.0
-                        added_n = (n_val * multiplier) / land
-                        added_p = (p_val * multiplier) / land
-                        added_k = (k_val * multiplier) / land
-                        
-                        current_n += added_n
-                        current_p += added_p
-                        current_k += added_k
-                        
-                        # Store breakdown for UI
-                        chemical_breakdown.append({
-                            "name": chem.name,
-                            "amount_g": chem.amount_g,
-                            "base_100g": {"N": float(n_val), "P": float(p_val), "K": float(k_val)},
-                            "added": {"N": float(added_n), "P": float(added_p), "K": float(added_k)}
-                        })
-                    except Exception as e:
-                        print(f"Warning: Could not add {chem.name}: {e}")
-                        continue
-
-    return max(0, current_n), max(0, current_p), max(0, current_k), chemical_breakdown
-
-# ---------- ML‑based NPK Prediction (preferred) ----------
 def calculate_current_npk(baseline, past_crops):
-    global npk_model, npk_scaler, agro_df
+    global npk_model, npk_scaler, chem_dict
     
-    if npk_model is None or npk_scaler is None or agro_df is None:
-        print("[WARN] ML model or agro data missing, using deterministic fallback.")
-        return deterministic_calculate_current_npk(baseline, past_crops)
+    if npk_model is None or npk_scaler is None or chem_dict is None:
+        print("[WARN] ML model or dictionary missing.")
+        return 0, 0, 0, []
     
     total_n_added = 0.0
     total_p_added = 0.0
     total_k_added = 0.0
     total_months = 0
-    chemical_breakdown = [] # Add this array
+    chemical_breakdown = [] 
     
     months_map = {'January':1, 'February':2, 'March':3, 'April':4, 'May':5, 'June':6,
                   'July':7, 'August':8, 'September':9, 'October':10, 'November':11, 'December':12}
@@ -217,17 +128,16 @@ def calculate_current_npk(baseline, past_crops):
             duration = max(1, duration)
         except:
             duration = 3
+            
         land = float(crop.landSize) if float(crop.landSize) > 0 else 1.0
         total_months += duration
         
+        # Fertilizers සහ Pesticides එකතු කිරීම
         for chem in crop.fertilizers + crop.pesticides:
-            if chem.name in agro_df.index:
-                n_val = agro_df.loc[chem.name, 'N']
-                p_val = agro_df.loc[chem.name, 'P']
-                k_val = agro_df.loc[chem.name, 'K']
-                if isinstance(n_val, pd.Series): n_val = n_val.iloc[0]
-                if isinstance(p_val, pd.Series): p_val = p_val.iloc[0]
-                if isinstance(k_val, pd.Series): k_val = k_val.iloc[0]
+            if chem.name in chem_dict:
+                n_val = chem_dict[chem.name]['N']
+                p_val = chem_dict[chem.name]['P']
+                k_val = chem_dict[chem.name]['K']
                 
                 multiplier = chem.amount_g / 100.0
                 added_n = (n_val * multiplier) / land
@@ -238,7 +148,6 @@ def calculate_current_npk(baseline, past_crops):
                 total_p_added += added_p
                 total_k_added += added_k
                 
-                # Store breakdown for UI
                 chemical_breakdown.append({
                     "name": chem.name,
                     "amount_g": chem.amount_g,
@@ -253,8 +162,10 @@ def calculate_current_npk(baseline, past_crops):
     features = np.array([[base_n, base_p, base_k, total_n_added, total_p_added, total_k_added, total_months]])
     features_scaled = npk_scaler.transform(features)
     pred = npk_model.predict(features_scaled)[0]
+    
     current_n, current_p, current_k = max(0, pred[0]), max(0, pred[1]), max(0, pred[2])
     return current_n, current_p, current_k, chemical_breakdown
+
 
 # ---------- Rule‑based Suitability Check ----------
 def is_crop_suitable(current_n, current_p, current_k, requirements):
