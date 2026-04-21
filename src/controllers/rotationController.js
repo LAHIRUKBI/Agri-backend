@@ -45,18 +45,27 @@ exports.getRotationPlan = async (req, res) => {
     let alternativeSuggestions = [];
 
     if (!gapAnalysis.isSuitable) {
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      
-      // AI Remedy Prompt
-      const remedyPrompt = `The farmer wants to plant '${targetCrop}' on ${targetLandSize} Acres. Current soil differences: Nitrogen: ${gapAnalysis.differences.diffN.toFixed(2)} ppm, Phosphorus: ${gapAnalysis.differences.diffP.toFixed(2)} ppm, Potassium: ${gapAnalysis.differences.diffK.toFixed(2)} ppm. Provide a clear agricultural recommendation to fix this in ${language}.`;
-      const remedyResponse = await model.generateContent(remedyPrompt);
-      aiSoilRemedy = remedyResponse.response.text();
+      // මෙහිදී AI එක try-catch එකක් තුලට දමා ඇත. AI error එකක් ආවත් ML predictions UI එකට යයි.
+      try {
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        
+        // AI Remedy Prompt
+        const remedyPrompt = `The farmer wants to plant '${targetCrop}' on ${targetLandSize} Acres. Current soil differences: Nitrogen: ${gapAnalysis.differences.diffN.toFixed(2)} ppm, Phosphorus: ${gapAnalysis.differences.diffP.toFixed(2)} ppm, Potassium: ${gapAnalysis.differences.diffK.toFixed(2)} ppm. Provide a clear agricultural recommendation to fix this in ${language}.`;
+        const remedyResponse = await model.generateContent(remedyPrompt);
+        aiSoilRemedy = remedyResponse.response.text();
 
-      // AI Alternatives Prompt
-      const altPrompt = `Soil nutrients: N: ${predictedSoil.current_n.toFixed(2)}ppm, P: ${predictedSoil.current_p.toFixed(2)}ppm, K: ${predictedSoil.current_k.toFixed(2)}ppm. Crop '${targetCrop}' is NOT suitable. Recommend EXACTLY TWO alternative crops that thrive in these conditions. Provide exactly 4 reasons for each. Language: ${language}. Output ONLY a valid JSON array like: [{"cropName": "Name", "reasons": ["R1", "R2", "R3", "R4"]}]`;
-      const altResponse = await model.generateContent(altPrompt);
-      const cleanText = altResponse.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-      alternativeSuggestions = JSON.parse(cleanText);
+        // AI Alternatives Prompt
+        const altPrompt = `Soil nutrients: N: ${predictedSoil.current_n.toFixed(2)}ppm, P: ${predictedSoil.current_p.toFixed(2)}ppm, K: ${predictedSoil.current_k.toFixed(2)}ppm. Crop '${targetCrop}' is NOT suitable. Recommend EXACTLY TWO alternative crops that thrive in these conditions. Provide exactly 4 reasons for each. Language: ${language}. Output ONLY a valid JSON array like: [{"cropName": "Name", "reasons": ["R1", "R2", "R3", "R4"]}]`;
+        const altResponse = await model.generateContent(altPrompt);
+        const cleanText = altResponse.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+        alternativeSuggestions = JSON.parse(cleanText);
+
+      } catch (aiError) {
+        console.error("Gemini API Error bypassed:", aiError.message);
+        // AI කාර්යබහුල වූ විට පෙන්වන Default පණිවිඩය
+        aiSoilRemedy = `⚠️ AI Assistant is currently experiencing high demand. However, based on our ML system calculations, your soil lacks the exact required nutrients for '${targetCrop}'. Please check the Nutrient Status Table below and apply fertilizers accordingly.`;
+        alternativeSuggestions = []; // හිස් Array එකක් යවන බැවින් UI එකේ alternatives කොටස පෙන්වන්නේ නැත.
+      }
     }
 
     // 6. Frontend එකට යැවීමට Data Format කිරීම
@@ -72,7 +81,6 @@ exports.getRotationPlan = async (req, res) => {
         { nutrient: "Potassium (K)", level: `${predictedSoil.current_k.toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.K, difference: parseFloat(gapAnalysis.differences.diffK.toFixed(2)) }
       ],
       alternativeSuggestions,
-      // අලුතින් එකතු කල දත්ත 
       chemicalBreakdown: predictedSoil.chemical_breakdown || [],
       calculatorDetails: {
           requirements: gapAnalysis.requirements,
