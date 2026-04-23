@@ -9,6 +9,7 @@ const adminRoutes = require('./src/routes/adminRoutes');
 const rotationRoutes = require('./src/routes/rotationRoutes');
 const guidanceRoutes = require('./src/routes/guidanceRoutes');
 const nutrientRoutes = require('./src/routes/nutrientRoutes');
+const soilHealthRoutes = require('./src/routes/soilHealthRoutes');
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/rotation', rotationRoutes);
 app.use('/api/guidance', guidanceRoutes);
 app.use('/api/nutrients', nutrientRoutes);
+app.use('/api/soil-health', soilHealthRoutes);
 
 
 // 404 handler - This must come AFTER all other routes
