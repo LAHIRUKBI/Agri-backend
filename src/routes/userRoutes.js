@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getUser, updateUser, updatePassword, getFarmers, getAllUsers, addCropToProfile, deleteCropFromProfile, startCropTracking, advanceCropStep  } = require('../controllers/userController');
+const { getUser, updateUser, updatePassword, getFarmers, getAllUsers, addCropToProfile, deleteCropFromProfile, startCropTracking, advanceCropStep, deleteUser  } = require('../controllers/userController');
 const protect = require('../middlewares/authMiddleware');
 const adminProtect = require('../middlewares/adminMiddleware');
 
@@ -13,5 +13,7 @@ router.put('/:id/add-crop', protect, addCropToProfile);
 router.delete('/:id/crop/:cropId', protect, deleteCropFromProfile);
 router.put('/:id/crop/:cropId/start', protect, startCropTracking);
 router.put('/:id/crop/:cropId/advance', protect, advanceCropStep);
+
+router.delete('/:id', protect, adminProtect, deleteUser);
 
 module.exports = router;
