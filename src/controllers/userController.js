@@ -298,7 +298,7 @@ exports.startCropTracking = async (req, res) => {
   }
 };
 
-// NEW: Advance to the next cultivation step early
+// Advance to the next cultivation step early
 exports.advanceCropStep = async (req, res) => {
   try {
     const userId = req.params.id;
@@ -330,6 +330,33 @@ exports.advanceCropStep = async (req, res) => {
     });
   } catch (error) {
     console.error('Error advancing crop step:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+// Delete User (Admin only)
+exports.deleteUser = async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const user = await User.findByIdAndDelete(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'User successfully deleted' 
+    });
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+    
     res.status(500).json({ message: error.message });
   }
 };
