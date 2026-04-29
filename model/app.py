@@ -227,12 +227,29 @@ async def recommend_crops(req: GuidanceRequest):
     if not predicted_crops:
         return {"success": False, "message": f"No crops predicted for {req.district} in {req.month}."}
         
+    # --- Sinhala Translation Dictionary ---
+    SINHALA_CROPS = {
+        "Rice": "වී", "Maize": "බඩඉරිඟු", "Tomato": "තක්කාලි", "Potato": "අර්තාපල්",
+        "Cabbage": "ගෝවා", "Carrot": "කැරට්", "Bitter Gourd": "කරවිල",
+        "Brinjal": "වම්බටු", "Chilli": "මිරිස්", "Pumpkin": "වට්ටක්කා",
+        "Snake Gourd": "පතෝල", "Okra": "බණ්ඩක්කා", "Onion": "ළූණු",
+        "Beans": "බෝංචි", "Cucumber": "පිපිඤ්ඤා", "Papaya": "ගස්ලබු",
+        "Banana": "කෙසෙල්", "Mango": "අඹ", "Watermelon": "පැණි කොමඩු",
+        "Pineapple": "අන්නාසි", "Green Gram": "මුං ඇට", "Cowpea": "කව්පි",
+        "Peanut": "රටකජු", "Sweet Potato": "බතල", "Radish": "රාබු",
+        "Leeks": "ලීක්ස්", "Beetroot": "බීට්රූට්", "Capsicum": "මාළු මිරිස්",
+        "Ginger": "ඉඟුරු", "Turmeric": "කහ", "Garlic": "සුදු ළූණු"
+    }
+
     recommendations = []
     for crop in predicted_crops:
-        reasoning_text = f"Based on ML predictions, {crop} is highly suitable for cultivation in {req.district} during {req.month} considering historical data and suitability patterns."
+        # භාෂාව සිංහල නම් Dictionary එකෙන් සිංහල නම ලබාගනී, නැත්නම් ඉංග්‍රීසි නමම තබයි.
+        display_crop_name = SINHALA_CROPS.get(crop, crop) if req.language == "Sinhala" else crop
+
+        # Reasoning එක හිස්කර, නිවැරදි නම සමගින් Array එකට එක් කිරීම
         recommendations.append({
-            "cropName": crop,
-            "reasoning": reasoning_text,
+            "cropName": display_crop_name,
+            "reasoning": "", 
             "steps": []
         })
     return {"success": True, "data": recommendations}
