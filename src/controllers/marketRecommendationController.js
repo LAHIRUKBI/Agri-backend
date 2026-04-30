@@ -1,5 +1,6 @@
 const axios = require("axios");
 const districtMarketMap = require("../utils/districtMarketMap");
+const { generateGroqInsights } = require("../utils/groqInsightGenerator");
 
 const ML_API_URL = process.env.ML_API_URL || "http://127.0.0.1:8000";
 const CLOSE_UP_PROBABILITY_DELTA = 0.03;
@@ -199,23 +200,37 @@ exports.recommendBestMarket = async (req, res) => {
       excluded_from_best_market:
         bestMarketCandidates.length > 0 && !bestMarketCandidates.includes(item),
     }));
+    const input = {
+      crop: normalizedCrop,
+      district: normalizedDistrict,
+      price_rs_kg: numericPrice,
+      horizon: numericHorizon,
+    };
+    const nearestMarketResult = toMarketResult(nearestMarket);
+    const bestPredictedMarketResult = toMarketResult(bestPredictedMarket);
+    const aiInsights = await generateGroqInsights({
+      input,
+      nearestMarket: nearestMarketResult,
+      bestPredictedMarket: bestPredictedMarketResult,
+      comparisons: frontendComparisons,
+      comparisonStrength,
+      comparisonNote,
+      isCloseCall,
+      probabilityDelta,
+    });
 
     return res.status(200).json({
       success: true,
-      input: {
-        crop: normalizedCrop,
-        district: normalizedDistrict,
-        price_rs_kg: numericPrice,
-        horizon: numericHorizon,
-      },
-      nearest_market: toMarketResult(nearestMarket),
-      best_market: toMarketResult(bestPredictedMarket),
-      best_predicted_market: toMarketResult(bestPredictedMarket),
+      input,
+      nearest_market: nearestMarketResult,
+      best_market: bestPredictedMarketResult,
+      best_predicted_market: bestPredictedMarketResult,
       comparison_strength: comparisonStrength,
       comparison_note: comparisonNote,
       is_close_call: isCloseCall,
       probability_delta: probabilityDelta,
       comparisons: frontendComparisons,
+      ai_insights: aiInsights,
     });
   } catch (error) {
     return res.status(500).json({
