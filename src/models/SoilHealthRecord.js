@@ -23,6 +23,11 @@ const soilHealthRecordSchema = new mongoose.Schema(
     location: String,
     cropType: String,
     season: String,
+    language: {
+      type: String,
+      enum: ['English', 'Sinhala'],
+      default: 'English'
+    },
     landSize: Number,
     imageMetrics: {
       brightness: Number,

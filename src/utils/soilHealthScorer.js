@@ -35,9 +35,100 @@ const DISTRICT_ZONE_MAP = {
   Vavuniya: 'Northern Dry Zone'
 };
 
+const LANGUAGE_BUNDLES = {
+  English: {
+    classifications: {
+      Excellent: 'Excellent',
+      Good: 'Good',
+      Fair: 'Fair',
+      Poor: 'Poor'
+    },
+    levels: {
+      Low: 'Low',
+      High: 'High',
+      Balanced: 'Balanced'
+    },
+    zones: {
+      'Dry Zone': 'Dry Zone',
+      'Intermediate Zone': 'Intermediate Zone',
+      'Wet Zone': 'Wet Zone',
+      'Urban / Mixed Zone': 'Urban / Mixed Zone',
+      'Northern Dry Zone': 'Northern Dry Zone',
+      'Mixed Zone': 'Mixed Zone'
+    },
+    soilTypes: {
+      'Reddish Brown Earth': 'Reddish Brown Earth',
+      'Low Humic Gley': 'Low Humic Gley',
+      'Red Yellow Podzolic': 'Red Yellow Podzolic',
+      'Alluvial / Sandy Mix': 'Alluvial / Sandy Mix',
+      'Mixed Agricultural Soil': 'Mixed Agricultural Soil'
+    },
+    recommendations: {
+      phLow: 'Soil appears acidic. Consider liming before the next planting cycle.',
+      phHigh: 'Soil appears alkaline. Use organic matter and split fertilizer applications carefully.',
+      nitrogenLow: 'Nitrogen is low. Apply a nitrogen-rich fertilizer or composted manure in split doses.',
+      phosphorusLow: 'Phosphorus is low. Add a phosphorus-supporting basal fertilizer during land preparation.',
+      potassiumLow: 'Potassium is low. Use a potassium source before flowering or fruit development.',
+      moistureLow: 'Soil moisture is low. Improve irrigation scheduling or use mulch to retain water.',
+      moistureHigh: 'Soil moisture is high. Improve drainage and avoid overwatering the field.',
+      organicMatterLow: 'Organic matter appears low. Add compost or crop residue to improve soil structure.',
+      excellent: 'Soil condition is strong overall. Maintain current practices and monitor before major fertilizer changes.',
+      cropHint(cropType) {
+        return `Use ${cropType} crop requirements as the final adjustment step before fertilizer application.`;
+      }
+    }
+  },
+  Sinhala: {
+    classifications: {
+      Excellent: 'විශිෂ්ටයි',
+      Good: 'හොඳයි',
+      Fair: 'මධ්‍යස්ථයි',
+      Poor: 'අවමයි'
+    },
+    levels: {
+      Low: 'අඩුයි',
+      High: 'වැඩියි',
+      Balanced: 'සමතුලිතයි'
+    },
+    zones: {
+      'Dry Zone': 'වියළි කලාපය',
+      'Intermediate Zone': 'අතරමැදි කලාපය',
+      'Wet Zone': 'තෙත් කලාපය',
+      'Urban / Mixed Zone': 'නාගරික / මිශ්‍ර කලාපය',
+      'Northern Dry Zone': 'උතුරු වියළි කලාපය',
+      'Mixed Zone': 'මිශ්‍ර කලාපය'
+    },
+    soilTypes: {
+      'Reddish Brown Earth': 'රතු-දුඹුරු පස',
+      'Low Humic Gley': 'අඩු හියුමස් ග්ලේ පස',
+      'Red Yellow Podzolic': 'රතු-කහ පොඩ්සොලික් පස',
+      'Alluvial / Sandy Mix': 'ගංගා තැන්පතු / වැලි මිශ්‍ර පස',
+      'Mixed Agricultural Soil': 'මිශ්‍ර කෘෂිකාර්මික පස'
+    },
+    recommendations: {
+      phLow: 'පස අම්ලීය බව පේනවා. ඊළඟ වගා වාරයට කලින් ලයිම් යෙදීම සලකා බලන්න.',
+      phHigh: 'පස ක්ෂාරීය බව පේනවා. සජීව ද්‍රව්‍ය යොදා පොහොර අවස්ථා කිහිපයකට බෙදා යෙදීම සුදුසුයි.',
+      nitrogenLow: 'නයිට්‍රජන් අඩුයි. නයිට්‍රජන් බහුල පොහොරක් හෝ කුණුපොහොර කොටස් වශයෙන් යොදන්න.',
+      phosphorusLow: 'පොස්පරස් අඩුයි. ඉඩම සකස් කරන අවස්ථාවේ පොස්පරස් අඩංගු මුල් පොහොරක් යොදන්න.',
+      potassiumLow: 'පොටෑසියම් අඩුයි. මල් හට ගැනීමට හෝ ගෙඩි පිහිටීමට පෙර පොටෑසියම් මූලාශ්‍රයක් යොදන්න.',
+      moistureLow: 'පසේ තෙතමනය අඩුයි. ජලසැපයුම් කාලසටහන හොඳ කරන්න හෝ මල්ච් භාවිතා කරන්න.',
+      moistureHigh: 'පසේ තෙතමනය වැඩියි. ජලාපවහනය හොඳ කරන්න සහ අධික ජලය යෙදීම වලක්වන්න.',
+      organicMatterLow: 'සජීව ද්‍රව්‍ය අඩු බව පේනවා. කොම්පෝස්ට් හෝ වගා අවශේෂ එක්කර පස ව්‍යුහය හොඳ කරන්න.',
+      excellent: 'සමස්ත පස තත්ත්වය හොඳයි. දැන් කරන ක්‍රම රැකගෙන, විශාල පොහොර වෙනස්කම් වලට කලින් පස නැවත නිරීක්ෂණය කරන්න.',
+      cropHint(cropType) {
+        return `${cropType} වගාව සඳහා අවසන් පොහොර තීරණය ගන්න කලින් එම වගාවේ අවශ්‍යතාත් සලකා බලන්න.`;
+      }
+    }
+  }
+};
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const round = (value, digits = 2) => Number(Number(value).toFixed(digits));
+
+function getLanguageBundle(language = 'English') {
+  return LANGUAGE_BUNDLES[language] || LANGUAGE_BUNDLES.English;
+}
 
 function createMetricScore(value, config) {
   const { min, max } = config;
@@ -116,45 +207,46 @@ function estimateImageDrivenReadings(imageMetrics = {}, metadata = {}) {
   };
 }
 
-function buildRecommendations(readings, levels, scoreLabel, metadata = {}) {
+function buildRecommendations(readings, levels, scoreLabel, metadata = {}, bundle = LANGUAGE_BUNDLES.English) {
   const recommendations = [];
 
   if (levels.ph === 'Low') {
-    recommendations.push('Soil appears acidic. Consider liming before the next planting cycle.');
+    recommendations.push(bundle.recommendations.phLow);
   }
   if (levels.ph === 'High') {
-    recommendations.push('Soil appears alkaline. Use organic matter and split fertilizer applications carefully.');
+    recommendations.push(bundle.recommendations.phHigh);
   }
   if (levels.nitrogen === 'Low') {
-    recommendations.push('Nitrogen is low. Apply a nitrogen-rich fertilizer or composted manure in split doses.');
+    recommendations.push(bundle.recommendations.nitrogenLow);
   }
   if (levels.phosphorus === 'Low') {
-    recommendations.push('Phosphorus is low. Add a phosphorus-supporting basal fertilizer during land preparation.');
+    recommendations.push(bundle.recommendations.phosphorusLow);
   }
   if (levels.potassium === 'Low') {
-    recommendations.push('Potassium is low. Use a potassium source before flowering or fruit development.');
+    recommendations.push(bundle.recommendations.potassiumLow);
   }
   if (levels.moisture === 'Low') {
-    recommendations.push('Soil moisture is low. Improve irrigation scheduling or use mulch to retain water.');
+    recommendations.push(bundle.recommendations.moistureLow);
   }
   if (levels.moisture === 'High') {
-    recommendations.push('Soil moisture is high. Improve drainage and avoid overwatering the field.');
+    recommendations.push(bundle.recommendations.moistureHigh);
   }
   if (readings.organicMatter < IDEAL_RANGES.organicMatter.min) {
-    recommendations.push('Organic matter appears low. Add compost or crop residue to improve soil structure.');
+    recommendations.push(bundle.recommendations.organicMatterLow);
   }
   if (scoreLabel === 'Excellent') {
-    recommendations.push('Soil condition is strong overall. Maintain current practices and monitor before major fertilizer changes.');
+    recommendations.push(bundle.recommendations.excellent);
   }
 
   if (metadata.cropType) {
-    recommendations.push(`Use ${metadata.cropType} crop requirements as the final adjustment step before fertilizer application.`);
+    recommendations.push(bundle.recommendations.cropHint(metadata.cropType));
   }
 
   return recommendations.slice(0, 6);
 }
 
 function computeSoilHealthAssessment(readings, metadata = {}, mode = 'image_only') {
+  const bundle = getLanguageBundle(metadata.language);
   const scores = {
     ph: createMetricScore(readings.ph, IDEAL_RANGES.ph),
     nitrogen: createMetricScore(readings.nitrogen, IDEAL_RANGES.nitrogen),
@@ -173,8 +265,8 @@ function computeSoilHealthAssessment(readings, metadata = {}, mode = 'image_only
     scores.organicMatter * IDEAL_RANGES.organicMatter.weight;
 
   const finalScore = round(weightedScore, 0);
-  const classification = classifyScore(finalScore);
-  const levels = {
+  const classificationKey = classifyScore(finalScore);
+  const levelsRaw = {
     ph: classifyLevel(readings.ph, IDEAL_RANGES.ph),
     nitrogen: classifyLevel(readings.nitrogen, IDEAL_RANGES.nitrogen),
     phosphorus: classifyLevel(readings.phosphorus, IDEAL_RANGES.phosphorus),
@@ -183,15 +275,23 @@ function computeSoilHealthAssessment(readings, metadata = {}, mode = 'image_only
     organicMatter: classifyLevel(readings.organicMatter, IDEAL_RANGES.organicMatter)
   };
 
-  const recommendations = buildRecommendations(readings, levels, classification, metadata);
+  const recommendations = buildRecommendations(readings, levelsRaw, classificationKey, metadata, bundle);
+  const levels = Object.fromEntries(
+    Object.entries(levelsRaw).map(([key, value]) => [key, bundle.levels[value] || value])
+  );
+  const soilTypeKey = readings.soilType || 'Mixed Agricultural Soil';
+  const agroZoneKey = DISTRICT_ZONE_MAP[metadata.district] || 'Mixed Zone';
 
   return {
     mode,
     score: finalScore,
-    classification,
+    classification: bundle.classifications[classificationKey] || classificationKey,
+    classificationKey,
     confidence: readings.confidence || (mode === 'image_only' ? 0.78 : 0.92),
-    soilType: readings.soilType || 'Mixed Agricultural Soil',
-    agroZone: DISTRICT_ZONE_MAP[metadata.district] || 'Mixed Zone',
+    soilType: bundle.soilTypes[soilTypeKey] || soilTypeKey,
+    soilTypeKey,
+    agroZone: bundle.zones[agroZoneKey] || agroZoneKey,
+    agroZoneKey,
     readings: {
       ph: round(readings.ph),
       nitrogen: round(readings.nitrogen),
@@ -201,6 +301,7 @@ function computeSoilHealthAssessment(readings, metadata = {}, mode = 'image_only
       organicMatter: round(readings.organicMatter)
     },
     levels,
+    levelsRaw,
     parameterScores: scores,
     recommendations
   };

@@ -11,13 +11,13 @@ function ensureOwner(req, ownerId) {
 
 exports.runQuickImageAssessment = async (req, res) => {
   try {
-    const { district, location, cropType, season, landSize, imageMetrics } = req.body;
+    const { district, location, cropType, season, landSize, imageMetrics, language } = req.body;
 
     if (!district || !imageMetrics) {
       return res.status(400).json({ success: false, message: 'District and image metrics are required.' });
     }
 
-    const result = createImageOnlyAssessment(imageMetrics, { district, cropType, season });
+    const result = createImageOnlyAssessment(imageMetrics, { district, cropType, season, language });
 
     const record = await SoilHealthRecord.create({
       farmer: req.user.id,
@@ -26,6 +26,7 @@ exports.runQuickImageAssessment = async (req, res) => {
       location,
       cropType,
       season,
+      language,
       landSize,
       imageMetrics,
       result
@@ -39,13 +40,13 @@ exports.runQuickImageAssessment = async (req, res) => {
 
 exports.createSensorRequest = async (req, res) => {
   try {
-    const { district, location, cropType, season, landSize, preferredDate, farmerNotes, imageMetrics } = req.body;
+    const { district, location, cropType, season, landSize, preferredDate, farmerNotes, imageMetrics, language } = req.body;
 
     if (!district || !imageMetrics) {
       return res.status(400).json({ success: false, message: 'District and image metrics are required.' });
     }
 
-    const imageAssessment = createImageOnlyAssessment(imageMetrics, { district, cropType, season });
+    const imageAssessment = createImageOnlyAssessment(imageMetrics, { district, cropType, season, language });
 
     const request = await SoilHealthRequest.create({
       farmer: req.user.id,
@@ -53,6 +54,7 @@ exports.createSensorRequest = async (req, res) => {
       location,
       cropType,
       season,
+      language,
       landSize,
       preferredDate,
       farmerNotes,
@@ -162,7 +164,8 @@ exports.completeRequest = async (req, res) => {
     const result = createFusionAssessment(sensorReadings, request.imageMetrics, {
       district: request.district,
       cropType: request.cropType,
-      season: request.season
+      season: request.season,
+      language: request.language
     });
 
     const record = await SoilHealthRecord.create({
@@ -173,6 +176,7 @@ exports.completeRequest = async (req, res) => {
       location: request.location,
       cropType: request.cropType,
       season: request.season,
+      language: request.language,
       landSize: request.landSize,
       imageMetrics: request.imageMetrics,
       sensorReadings,
@@ -204,6 +208,53 @@ exports.getRecordById = async (req, res) => {
     }
 
     res.status(200).json({ success: true, data: record });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.deleteRecordById = async (req, res) => {
+  try {
+    const record = await SoilHealthRecord.findById(req.params.id);
+    if (!record) {
+      return res.status(404).json({ success: false, message: 'Record not found.' });
+    }
+
+    if (!ensureOwner(req, record.farmer)) {
+      return res.status(403).json({ success: false, message: 'Not authorized to delete this record.' });
+    }
+
+    if (record.request) {
+      await SoilHealthRequest.findByIdAndUpdate(record.request, { $unset: { finalRecord: 1 } });
+    }
+
+    await record.deleteOne();
+
+    res.status(200).json({ success: true, message: 'Assessment history item deleted.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.clearMyHistory = async (req, res) => {
+  try {
+    const records = await SoilHealthRecord.find({ farmer: req.user.id }).select('_id request');
+
+    if (records.length === 0) {
+      return res.status(200).json({ success: true, message: 'No assessment history to clear.' });
+    }
+
+    const requestIds = records.map((record) => record.request).filter(Boolean);
+    if (requestIds.length > 0) {
+      await SoilHealthRequest.updateMany(
+        { _id: { $in: requestIds } },
+        { $unset: { finalRecord: 1 } }
+      );
+    }
+
+    await SoilHealthRecord.deleteMany({ farmer: req.user.id });
+
+    res.status(200).json({ success: true, message: 'Assessment history cleared.' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

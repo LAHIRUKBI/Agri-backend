@@ -11,13 +11,17 @@ const {
   approveRequest,
   rejectRequest,
   completeRequest,
-  getRecordById
+  getRecordById,
+  deleteRecordById,
+  clearMyHistory
 } = require('../controllers/soilHealthController');
 
 router.post('/analyze-image', protect, runQuickImageAssessment);
 router.post('/requests', protect, createSensorRequest);
 router.get('/history', protect, getMyHistory);
+router.delete('/history', protect, clearMyHistory);
 router.get('/history/:id', protect, getRecordById);
+router.delete('/history/:id', protect, deleteRecordById);
 router.get('/requests/my', protect, getMyRequests);
 
 router.get('/admin/requests', protect, adminProtect, getAdminRequests);
