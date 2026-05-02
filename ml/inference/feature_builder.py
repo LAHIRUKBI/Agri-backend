@@ -14,6 +14,45 @@ FEATURE_COLUMNS_PATH = BASE_DIR / "model" / "training_runs" / "run_001" / "featu
 WEATHER_PATH = BASE_DIR / "datasets" / "interim" / "weekly_weather.csv"
 INFLATION_PATH = BASE_DIR / "datasets" / "interim" / "weekly_inflation.csv"
 
+RUNTIME_FEATURE_COLUMNS = [
+    "year",
+    "month",
+    "week_number",
+    "district",
+    "market",
+    "crop",
+    "price_rs_kg",
+    "season",
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_4",
+    "rolling_mean_2",
+    "rolling_mean_4",
+    "rolling_std_4",
+    "rolling_min_4",
+    "rolling_max_4",
+    "momentum_1",
+    "momentum_2",
+    "momentum_4",
+    "price_vs_mean_4",
+    "range_4",
+    "volatility_ratio",
+    "trend_up_1",
+    "trend_up_2",
+    "trend_up_3",
+    "month_sin",
+    "month_cos",
+    "week_sin",
+    "week_cos",
+    "temp_mean",
+    "rainfall_total",
+    "rain_sum",
+    "wind_max",
+    "inflation_rate",
+    "inflation_mom_change",
+]
+
 
 def get_future_date(horizon_weeks: int) -> tuple[int, int, int]:
     today = datetime.today()
@@ -260,14 +299,20 @@ def _cyclical_week(week_number: int) -> tuple[float, float]:
     return float(np.sin(2 * np.pi * week_number / 52)), float(np.cos(2 * np.pi * week_number / 52))
 
 
-def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dict, Dict]:
+def build_features_for_period(
+    payload: Dict,
+    history_df: pd.DataFrame,
+    year: int,
+    month: int,
+    week_number: int,
+    weather_df: pd.DataFrame | None = None,
+    inflation_df: pd.DataFrame | None = None,
+    horizon: int | None = None,
+) -> Tuple[Dict, Dict]:
     crop = str(payload["crop"]).strip().lower()
     district = str(payload["district"]).strip().lower()
     market = str(payload.get("market", "unknown")).strip().lower()
     price_rs_kg = float(payload["price_rs_kg"])
-    horizon = int(payload.get("horizon", 1))
-
-    year, month, week_number = get_future_date(horizon)
     season = get_season(month)
 
     subset, history_meta = _find_history_subset(history_df, crop=crop, district=district, market=market)
@@ -339,7 +384,9 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dic
         "week_cos": week_cos,
     }
 
-    weather_df = load_weather()
+    if weather_df is None:
+        weather_df = load_weather()
+
     weather_row = weather_df[
         (weather_df["district"] == district) &
         (weather_df["year"] == year) &
@@ -358,7 +405,9 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dic
         rain_sum = 0.0
         wind_max = 0.0
 
-    inflation_df = load_inflation()
+    if inflation_df is None:
+        inflation_df = load_inflation()
+
     inflation_row = inflation_df[
         (inflation_df["year"] == year) &
         (inflation_df["month"] == month) &
@@ -381,6 +430,7 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dic
         "inflation_rate": inflation_rate,
         "inflation_mom_change": inflation_mom_change,
     })
+    feature_row = {column: feature_row[column] for column in RUNTIME_FEATURE_COLUMNS}
 
     latest_market_price, latest_market_price_source = _latest_market_price(
         history_df,
@@ -406,3 +456,17 @@ def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dic
     }
 
     return feature_row, meta
+
+
+def build_runtime_features(payload: Dict, history_df: pd.DataFrame) -> Tuple[Dict, Dict]:
+    horizon = int(payload.get("horizon", 1))
+    year, month, week_number = get_future_date(horizon)
+
+    return build_features_for_period(
+        payload=payload,
+        history_df=history_df,
+        year=year,
+        month=month,
+        week_number=week_number,
+        horizon=horizon,
+    )
