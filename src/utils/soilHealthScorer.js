@@ -312,6 +312,15 @@ function createImageOnlyAssessment(imageMetrics = {}, metadata = {}) {
   return computeSoilHealthAssessment(estimates, metadata, 'image_only');
 }
 
+function createAssessmentFromReadings(readings = {}, metadata = {}, mode = 'image_only') {
+  const normalizedReadings = {
+    ...readings,
+    soilType: readings.soilType || inferSoilTypeFromImage(metadata.imageMetrics || {}, metadata.district)
+  };
+
+  return computeSoilHealthAssessment(normalizedReadings, metadata, mode);
+}
+
 function createFusionAssessment(sensorReadings = {}, imageMetrics = {}, metadata = {}) {
   const imageEstimates = estimateImageDrivenReadings(imageMetrics, metadata);
   const fusedReadings = {
@@ -330,6 +339,7 @@ function createFusionAssessment(sensorReadings = {}, imageMetrics = {}, metadata
 
 module.exports = {
   createImageOnlyAssessment,
+  createAssessmentFromReadings,
   createFusionAssessment,
   DISTRICT_ZONE_MAP
 };

@@ -2,11 +2,41 @@ const SoilHealthRecord = require('../models/SoilHealthRecord');
 const SoilHealthRequest = require('../models/SoilHealthRequest');
 const {
   createImageOnlyAssessment,
+  createAssessmentFromReadings,
   createFusionAssessment
 } = require('../utils/soilHealthScorer');
 
 function ensureOwner(req, ownerId) {
   return String(req.user.id) === String(ownerId);
+}
+
+async function generateQuickImageAssessment(imageMetrics, metadata) {
+  try {
+    const response = await fetch('http://localhost:8000/soil_image_assess', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        district: metadata.district,
+        season: metadata.season,
+        cropType: metadata.cropType,
+        language: metadata.language,
+        imageMetrics
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Python soil-image model endpoint is unavailable.');
+    }
+
+    const payload = await response.json();
+    if (!payload.success || !payload.predictedReadings) {
+      throw new Error(payload.message || 'Python soil-image model did not return predictions.');
+    }
+
+    return createAssessmentFromReadings(payload.predictedReadings, { ...metadata, imageMetrics }, 'image_only');
+  } catch (error) {
+    return createImageOnlyAssessment(imageMetrics, metadata);
+  }
 }
 
 exports.runQuickImageAssessment = async (req, res) => {
@@ -17,7 +47,7 @@ exports.runQuickImageAssessment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'District and image metrics are required.' });
     }
 
-    const result = createImageOnlyAssessment(imageMetrics, { district, cropType, season, language });
+    const result = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language });
 
     const record = await SoilHealthRecord.create({
       farmer: req.user.id,
@@ -46,7 +76,7 @@ exports.createSensorRequest = async (req, res) => {
       return res.status(400).json({ success: false, message: 'District and image metrics are required.' });
     }
 
-    const imageAssessment = createImageOnlyAssessment(imageMetrics, { district, cropType, season, language });
+    const imageAssessment = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language });
 
     const request = await SoilHealthRequest.create({
       farmer: req.user.id,

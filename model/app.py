@@ -39,6 +39,9 @@ agro_df = None               # loaded once at startup
 crop_rec_model = None
 crop_rec_encoder = None
 crop_rec_mlb = None
+soil_image_model = None
+soil_image_feature_columns = None
+soil_image_target_columns = None
 
 # ---------- Load NPK Predictor Model ----------
 def load_npk_predictor():
@@ -98,6 +101,24 @@ def load_crop_rec_models():
         print("✅ Crop Recommendation ML Models loaded into memory.")
         return True
     except Exception as e:
+        return False
+
+def load_soil_image_model():
+    global soil_image_model, soil_image_feature_columns, soil_image_target_columns
+    model_path = os.path.join(MODEL_DIR, "soil_image_assessor.pkl")
+    if not os.path.exists(model_path):
+        print("⚠️ Soil image model not found. Quick image check will use backend fallback.")
+        return False
+    try:
+        with open(model_path, "rb") as f:
+            artifact = pickle.load(f)
+        soil_image_model = artifact["model"]
+        soil_image_feature_columns = artifact["feature_columns"]
+        soil_image_target_columns = artifact["target_columns"]
+        print("✅ Soil image assessor model loaded.")
+        return True
+    except Exception as e:
+        print(f"⚠️ Failed to load soil image model: {e}")
         return False
 
 def train_crop_recommendation_model():
@@ -298,12 +319,20 @@ class GuidanceRequest(BaseModel):
     month: str
     language: str
 
+class SoilImageAssessmentRequest(BaseModel):
+    district: str
+    season: str = "Maha"
+    cropType: str = ""
+    language: str = "English"
+    imageMetrics: Dict[str, float]
+
 # ---------- Start-up Loaders ----------
 load_npk_predictor()
 load_agrochemical_data()
 if not load_crop_rec_models():
     if train_crop_recommendation_model():
         load_crop_rec_models()
+load_soil_image_model()
 
 # ---------- Endpoints ----------
 @app.post("/predict_npk")
@@ -315,6 +344,41 @@ async def predict_npk(req: RotationRequest):
         "current_p": float(current_p),
         "current_k": float(current_k),
         "chemical_breakdown": chemical_breakdown # Send to Node JS
+    }
+
+@app.post("/soil_image_assess")
+async def soil_image_assess(req: SoilImageAssessmentRequest):
+    global soil_image_model, soil_image_feature_columns, soil_image_target_columns
+
+    if soil_image_model is None or soil_image_feature_columns is None or soil_image_target_columns is None:
+        return {
+            "success": False,
+            "message": "Soil image model is not trained yet."
+        }
+
+    raw_row = {
+        "brightness": float(req.imageMetrics.get("brightness", 0.0)),
+        "textureScore": float(req.imageMetrics.get("textureScore", 0.0)),
+        "redMean": float(req.imageMetrics.get("redMean", 0.0)),
+        "greenMean": float(req.imageMetrics.get("greenMean", 0.0)),
+        "blueMean": float(req.imageMetrics.get("blueMean", 0.0)),
+        "district": req.district,
+        "season": req.season or "Maha"
+    }
+
+    feature_df = pd.DataFrame([raw_row])
+    feature_df = pd.get_dummies(feature_df, columns=["district", "season"])
+    feature_df = feature_df.reindex(columns=soil_image_feature_columns, fill_value=0)
+
+    prediction = soil_image_model.predict(feature_df)[0]
+    predicted = {
+        target: round(float(value), 2)
+        for target, value in zip(soil_image_target_columns, prediction)
+    }
+
+    return {
+        "success": True,
+        "predictedReadings": predicted
     }
 
 @app.get("/get_requirements/{crop_name}")
