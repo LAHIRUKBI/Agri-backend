@@ -84,16 +84,18 @@ def load_crop_rec_models():
         print(f"⚠️ Error loading Crop Models: {e}. Please ensure Colab models are in saved_models folder.")
         return False
 
-# ---------- Deterministic Fallback NPK Calculation (Unchanged) ----------
+# ---------- Deterministic Fallback NPK Calculation ----------
+SQ_FT_PER_ACRE = 43560.0
+
 def calculate_current_npk(baseline, past_crops):
     global npk_model, npk_scaler, chem_dict
     
     if npk_model is None or npk_scaler is None or chem_dict is None:
         return 0, 0, 0, []
     
-    total_n_added = 0.0
-    total_p_added = 0.0
-    total_k_added = 0.0
+    total_n_added_per_sqft = 0.0
+    total_p_added_per_sqft = 0.0
+    total_k_added_per_sqft = 0.0
     total_months = 0
     chemical_breakdown = [] 
     
@@ -107,7 +109,8 @@ def calculate_current_npk(baseline, past_crops):
         except:
             duration = 3
             
-        land = float(crop.landSize) if float(crop.landSize) > 0 else 1.0
+        # අක්කර ප්‍රමාණය වර්ග අඩි බවට පරිවර්තනය කිරීම
+        sq_ft = float(crop.landSize) * SQ_FT_PER_ACRE if float(crop.landSize) > 0 else SQ_FT_PER_ACRE
         total_months += duration
         
         for chem in crop.fertilizers + crop.pesticides:
@@ -116,27 +119,37 @@ def calculate_current_npk(baseline, past_crops):
                 p_val = chem_dict[chem.name]['P']
                 k_val = chem_dict[chem.name]['K']
                 
+                # මුළු ග්‍රෑම් ප්‍රමාණය සෙවීම
                 multiplier = chem.amount_g / 100.0
-                added_n = (n_val * multiplier) / land
-                added_p = (p_val * multiplier) / land
-                added_k = (k_val * multiplier) / land
+                total_added_n = n_val * multiplier
+                total_added_p = p_val * multiplier
+                total_added_k = k_val * multiplier
                 
-                total_n_added += added_n
-                total_p_added += added_p
-                total_k_added += added_k
+                # සම්පූර්ණ ප්‍රමාණය වර්ග අඩි ගණනින් බෙදා වර්ග අඩියක අගය සෙවීම
+                added_n_per_sqft = total_added_n / sq_ft
+                added_p_per_sqft = total_added_p / sq_ft
+                added_k_per_sqft = total_added_k / sq_ft
+                
+                total_n_added_per_sqft += added_n_per_sqft
+                total_p_added_per_sqft += added_p_per_sqft
+                total_k_added_per_sqft += added_k_per_sqft
                 
                 chemical_breakdown.append({
                     "name": chem.name,
                     "amount_g": chem.amount_g,
                     "base_100g": {"N": float(n_val), "P": float(p_val), "K": float(k_val)},
-                    "added": {"N": float(added_n), "P": float(added_p), "K": float(added_k)}
+                    "added": {
+                        "N": float(added_n_per_sqft), 
+                        "P": float(added_p_per_sqft), 
+                        "K": float(added_k_per_sqft)
+                    }
                 })
     
     base_n = baseline.get('N', 50.0)
     base_p = baseline.get('P', 20.0)
     base_k = baseline.get('K', 100.0)
     
-    features = np.array([[base_n, base_p, base_k, total_n_added, total_p_added, total_k_added, total_months]])
+    features = np.array([[base_n, base_p, base_k, total_n_added_per_sqft, total_p_added_per_sqft, total_k_added_per_sqft, total_months]])
     features_scaled = npk_scaler.transform(features)
     pred = npk_model.predict(features_scaled)[0]
     
