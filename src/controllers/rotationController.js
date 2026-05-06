@@ -1,18 +1,17 @@
-// backend/src/controllers/rotationController.js
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const RotationPlan = require('../models/RotationPlan');
 const SoilConfig = require('../models/SoilConfig');
 const { calculateGapAndSuitability } = require('../../algorithms/nutrientCalculator');
-const { acresToSqFt } = require('../../algorithms/landCalculator'); // අලුත් landCalculator එක import කිරීම
+const { acresToSqFt } = require('../../algorithms/landCalculator');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Global dynamic import for node-fetch
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
 exports.getRotationPlan = async (req, res) => {
   try {
-    const { targetCrop, targetLandSize, currentMonth, previousCrops, language } = req.body;
+    // අලුතින් එක් කළ soilType, phLevel, rainfall මෙතැනින් ලබා ගනී
+    const { targetCrop, targetLandSize, soilType, phLevel, rainfall, currentMonth, previousCrops, language } = req.body;
     const userId = req.user.id;
 
     if (!previousCrops || previousCrops.length === 0) {
@@ -30,10 +29,14 @@ exports.getRotationPlan = async (req, res) => {
         K: baseConfig.nutrients.find(n => n.symbol === 'K').min
     };
 
+    // Python API එකට අලුත් Environmental Factors යැවීම
     const pythonPredictRes = await fetch('http://localhost:8000/predict_npk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetCrop, targetLandSize, currentMonth, previousCrops, language, baselineNutrients }),
+      body: JSON.stringify({ 
+        targetCrop, targetLandSize, currentMonth, previousCrops, language, baselineNutrients,
+        soilType, phLevel, rainfall 
+      }),
     });
     const predictedSoil = await pythonPredictRes.json();
 
@@ -62,7 +65,6 @@ exports.getRotationPlan = async (req, res) => {
         const altPrompt = `Soil nutrients: N: ${predictedSoil.current_n.toFixed(2)}ppm, P: ${predictedSoil.current_p.toFixed(2)}ppm, K: ${predictedSoil.current_k.toFixed(2)}ppm. Crop '${targetCrop}' is NOT suitable. Recommend EXACTLY TWO alternative crops that thrive in these conditions. Provide exactly 4 reasons for each. Language: ${language}. Output ONLY a valid JSON array like: [{"cropName": "Name", "reasons": ["R1", "R2", "R3", "R4"]}]`;
         const altResponse = await model.generateContent(altPrompt);
         
-        // Error එක නිවැරදි කිරීම සඳහා මෙහි backticks (\`\`\`) escape කර ඇත.
         const cleanText = altResponse.response.text().replace(/\`\`\`json/g, '').replace(/\n\`\`\`/g, '').trim();
         alternativeSuggestions = JSON.parse(cleanText);
 
@@ -116,10 +118,14 @@ exports.getRotationPlan = async (req, res) => {
       }
     };
 
+    // Database එකට අලුත් variables ටිකත් Save කිරීම
     const newPlan = new RotationPlan({
       user: userId, targetCrop, targetLandSize, currentMonth,
+      soilType, phLevel, rainfall, // <--- New DB Fields
       pastCrops: previousCrops, targetEvaluation: finalData.targetEvaluation,
-      soilNutrientLevels: finalData.soilNutrientLevels, alternativeSuggestions
+      soilNutrientLevels: finalData.soilNutrientLevels, alternativeSuggestions,
+      chemicalBreakdown: finalData.chemicalBreakdown,
+      calculatorDetails: finalData.calculatorDetails
     });
     await newPlan.save();
 

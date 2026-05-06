@@ -8,17 +8,20 @@ const chemicalSchema = new mongoose.Schema({
 const rotationPlanSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   targetCrop: { type: String, required: true },
-  targetLandSize: { type: Number, required: true }, // Added land size
+  targetLandSize: { type: Number, required: true },
+  soilType: { type: String }, // අලුතින් එකතු විය
+  phLevel: { type: Number },  // අලුතින් එකතු විය
+  rainfall: { type: Number }, // අලුතින් එකතු විය
   currentMonth: { type: String, required: true },
   pastCrops: [{
     cropName: String,
-    landSize: Number, // Added land size
+    landSize: Number, 
     startMonth: String,
     startYear: String,
     endMonth: String,
     endYear: String,
-    fertilizers: [chemicalSchema], // Changed to Array
-    pesticides: [chemicalSchema]   // Changed to Array
+    fertilizers: [chemicalSchema], 
+    pesticides: [chemicalSchema]   
   }],
   targetEvaluation: {
     isSuitable: Boolean,
@@ -31,7 +34,7 @@ const rotationPlanSchema = new mongoose.Schema({
     depletionPrediction: String,
     difference: Number 
   }],
-  alternativeSuggestions: [{ // Added for alternatives
+  alternativeSuggestions: [{ 
     cropName: String,
     reasons: [String]
   }],

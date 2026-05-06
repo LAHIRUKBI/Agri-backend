@@ -1,3 +1,4 @@
 node_modules
 .env
 model/saved_models/npk_predictor_model.pkl
+model/saved_models/npk_research_model.pkl
