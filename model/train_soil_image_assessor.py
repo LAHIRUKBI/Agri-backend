@@ -4,7 +4,6 @@ from typing import Dict
 
 import numpy as np
 import pandas as pd
-from PIL import Image
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import train_test_split
@@ -23,8 +22,22 @@ TARGET_COLUMNS = ["ph", "nitrogen", "phosphorus", "potassium", "moisture", "orga
 
 
 def extract_image_metrics(image_path: str) -> Dict[str, float]:
-    image = Image.open(image_path).convert("RGB").resize((224, 224))
-    pixels = np.asarray(image, dtype=np.float32)
+    with open(image_path, "rb") as image_file:
+        header = image_file.readline().strip()
+        if header != b"P6":
+            raise ValueError(f"Unsupported image format for {image_path}. Expected binary PPM (P6).")
+
+        dimensions_line = image_file.readline().strip()
+        while dimensions_line.startswith(b"#"):
+            dimensions_line = image_file.readline().strip()
+        width, height = map(int, dimensions_line.split())
+
+        max_value = int(image_file.readline().strip())
+        if max_value != 255:
+            raise ValueError(f"Unsupported max value in {image_path}: {max_value}")
+
+        raw = image_file.read()
+        pixels = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3)).astype(np.float32)
 
     red = pixels[:, :, 0]
     green = pixels[:, :, 1]
@@ -110,7 +123,7 @@ def train_model():
         max_depth=18,
         min_samples_split=2,
         random_state=42,
-        n_jobs=-1
+        n_jobs=1
     )
     model.fit(X_train, y_train)
 
