@@ -10,7 +10,6 @@ const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args
 
 exports.getRotationPlan = async (req, res) => {
   try {
-    // අලුතින් එක් කළ soilType, phLevel, rainfall මෙතැනින් ලබා ගනී
     const { targetCrop, targetLandSize, soilType, phLevel, rainfall, currentMonth, previousCrops, language } = req.body;
     const userId = req.user.id;
 
@@ -29,7 +28,6 @@ exports.getRotationPlan = async (req, res) => {
         K: baseConfig.nutrients.find(n => n.symbol === 'K').min
     };
 
-    // Python API එකට අලුත් Environmental Factors යැවීම
     const pythonPredictRes = await fetch('http://localhost:8000/predict_npk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -52,26 +50,20 @@ exports.getRotationPlan = async (req, res) => {
     }));
 
     let aiSoilRemedy = "Soil is well-suited for this crop! Maintain current nutrient levels.";
-    let alternativeSuggestions = [];
+    let alternativeSuggestions = []; // මුලින් මෙය හිස්ව යවමු
 
     if (!gapAnalysis.isSuitable) {
       try {
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        
         const remedyPrompt = `The farmer wants to plant '${targetCrop}' on ${targetLandSize} Acres. Current soil differences: Nitrogen: ${gapAnalysis.differences.diffN.toFixed(2)} ppm, Phosphorus: ${gapAnalysis.differences.diffP.toFixed(2)} ppm, Potassium: ${gapAnalysis.differences.diffK.toFixed(2)} ppm. Provide a clear agricultural recommendation to fix this in ${language}.`;
         const remedyResponse = await model.generateContent(remedyPrompt);
         aiSoilRemedy = remedyResponse.response.text();
 
-        const altPrompt = `Soil nutrients: N: ${predictedSoil.current_n.toFixed(2)}ppm, P: ${predictedSoil.current_p.toFixed(2)}ppm, K: ${predictedSoil.current_k.toFixed(2)}ppm. Crop '${targetCrop}' is NOT suitable. Recommend EXACTLY TWO alternative crops that thrive in these conditions. Provide exactly 4 reasons for each. Language: ${language}. Output ONLY a valid JSON array like: [{"cropName": "Name", "reasons": ["R1", "R2", "R3", "R4"]}]`;
-        const altResponse = await model.generateContent(altPrompt);
-        
-        const cleanText = altResponse.response.text().replace(/\`\`\`json/g, '').replace(/\n\`\`\`/g, '').trim();
-        alternativeSuggestions = JSON.parse(cleanText);
+        // වෙනස්කම: Alternative crops සෙවීමේ AI code එක මෙතැනින් ඉවත් කර ඇත.
 
       } catch (aiError) {
         console.error("Gemini API Error bypassed:", aiError.message);
-        aiSoilRemedy = `⚠️ AI Assistant is currently experiencing high demand. However, based on our ML system calculations, your soil lacks the exact required nutrients for '${targetCrop}'. Please check the Nutrient Status Table below and apply fertilizers accordingly.`;
-        alternativeSuggestions = []; 
+        aiSoilRemedy = `⚠️ AI Assistant is currently experiencing high demand. Please check the Nutrient Status Table below and apply fertilizers accordingly.`;
       }
     }
 
@@ -118,22 +110,52 @@ exports.getRotationPlan = async (req, res) => {
       }
     };
 
-    // Database එකට අලුත් variables ටිකත් Save කිරීම
     const newPlan = new RotationPlan({
       user: userId, targetCrop, targetLandSize, currentMonth,
-      soilType, phLevel, rainfall, // <--- New DB Fields
+      soilType, phLevel, rainfall,
       pastCrops: previousCrops, targetEvaluation: finalData.targetEvaluation,
       soilNutrientLevels: finalData.soilNutrientLevels, alternativeSuggestions,
       chemicalBreakdown: finalData.chemicalBreakdown,
       calculatorDetails: finalData.calculatorDetails
     });
-    await newPlan.save();
+    const savedPlan = await newPlan.save();
+    
+    // වෙනස්කම: සේව් වූ Plan එකේ ID එක Frontend එකට යවමු (පසුව Alternatives Update කිරීමට)
+    finalData.planId = savedPlan._id;
 
     res.status(200).json(finalData);
 
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message || 'Failed to generate rotation plan.' });
+  }
+};
+
+// අලුත් Function එක: Button එක click කරාම පමණක් AI වලින් Alternative crops 2ක් ගෙන එයි
+exports.getAlternativeCrops = async (req, res) => {
+  try {
+    const { planId, targetCrop, currentN, currentP, currentK, language } = req.body;
+    const userId = req.user.id;
+
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const altPrompt = `Soil nutrients: N: ${currentN}ppm, P: ${currentP}ppm, K: ${currentK}ppm. Crop '${targetCrop}' is NOT suitable. Recommend EXACTLY TWO alternative crops that thrive in these conditions. Provide exactly 4 reasons for each. Language: ${language}. Output ONLY a valid JSON array like: [{"cropName": "Name", "reasons": ["R1", "R2", "R3", "R4"]}]`;
+    
+    const altResponse = await model.generateContent(altPrompt);
+    const cleanText = altResponse.response.text().replace(/\`\`\`json/g, '').replace(/\n\`\`\`/g, '').trim();
+    const alternativeSuggestions = JSON.parse(cleanText);
+
+    // Database එකේ ඇති කලින් සේව් කරපු Record එක අලුත් AI crops වලින් Update කරන්න
+    if (planId) {
+       await RotationPlan.findOneAndUpdate(
+         { _id: planId, user: userId },
+         { alternativeSuggestions: alternativeSuggestions }
+       );
+    }
+
+    res.status(200).json({ alternativeSuggestions });
+  } catch (error) {
+    console.error("AI Alternative Error:", error);
+    res.status(500).json({ error: 'Failed to generate alternative crops via AI.' });
   }
 };
 
