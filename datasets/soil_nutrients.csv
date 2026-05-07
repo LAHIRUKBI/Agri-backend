@@ -5,4 +5,4 @@ Potassium,K,main,10,150,ppm
 Calcium,Ca,secondary,1000,2000,ppm
 Magnesium,Mg,secondary,100,250,ppm
 Sulfur,S,secondary,10,50,ppm
-Target_pH_Min,6,Target_pH_Max,7
+Target_pH_Min,6,Target_pH_Max,11
