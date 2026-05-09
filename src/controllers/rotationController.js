@@ -32,8 +32,7 @@ exports.getRotationPlan = async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        targetCrop, targetLandSize, currentMonth, previousCrops, language, baselineNutrients,
-        soilType, phLevel, rainfall 
+        targetCrop, targetLandSize, currentMonth, previousCrops, language
       }),
     });
     const predictedSoil = await pythonPredictRes.json();
@@ -41,14 +40,17 @@ exports.getRotationPlan = async (req, res) => {
     const pythonReqRes = await fetch(`http://localhost:8000/get_requirements/${targetCrop}`);
     const targetRequirements = await pythonReqRes.json();
 
-    const gapAnalysis = calculateGapAndSuitability(predictedSoil, targetRequirements, baseConfig);
+    // Environmental factors දැන් යවන්නේ JS Calculator එකටයි
+    const gapAnalysis = calculateGapAndSuitability(predictedSoil, targetRequirements, baseConfig, phLevel, rainfall, previousCrops);
 
+    // Land Area Calculation කොටස
     const landCalculations = previousCrops.map(crop => ({
         cropName: crop.cropName,
         acres: crop.landSize,
         sqFt: acresToSqFt(crop.landSize)
     }));
 
+    // AI Soil Remedy කොටස
     let aiSoilRemedy = "Soil is well-suited for this crop! Maintain current nutrient levels.";
     let alternativeSuggestions = []; // මුලින් මෙය හිස්ව යවමු
 
@@ -58,9 +60,6 @@ exports.getRotationPlan = async (req, res) => {
         const remedyPrompt = `The farmer wants to plant '${targetCrop}' on ${targetLandSize} Acres. Current soil differences: Nitrogen: ${gapAnalysis.differences.diffN.toFixed(2)} ppm, Phosphorus: ${gapAnalysis.differences.diffP.toFixed(2)} ppm, Potassium: ${gapAnalysis.differences.diffK.toFixed(2)} ppm. Provide a clear agricultural recommendation to fix this in ${language}.`;
         const remedyResponse = await model.generateContent(remedyPrompt);
         aiSoilRemedy = remedyResponse.response.text();
-
-        // වෙනස්කම: Alternative crops සෙවීමේ AI code එක මෙතැනින් ඉවත් කර ඇත.
-
       } catch (aiError) {
         console.error("Gemini API Error bypassed:", aiError.message);
         aiSoilRemedy = `⚠️ AI Assistant is currently experiencing high demand. Please check the Nutrient Status Table below and apply fertilizers accordingly.`;
@@ -76,28 +75,22 @@ exports.getRotationPlan = async (req, res) => {
       },
       soilNutrientLevels: [
         { 
-          nutrient: "Nitrogen (N)", 
-          level: `${predictedSoil.current_n.toFixed(2)} ppm`, 
-          depletionPrediction: gapAnalysis.statuses.N, 
-          difference: parseFloat(gapAnalysis.differences.diffN.toFixed(2)),
-          targetMin: gapAnalysis.requirements.N.min,
-          targetMax: gapAnalysis.requirements.N.max
+          nutrient: "Nitrogen (N)", level: gapAnalysis.currentLevels.N.toFixed(2), 
+          depletionPrediction: gapAnalysis.statuses.N, difference: gapAnalysis.differences.diffN,
+          targetMin: gapAnalysis.requirements.N.min, targetMax: gapAnalysis.requirements.N.max,
+          breakdown: gapAnalysis.breakdown.N // Breakdown data is mapped here
         },
         { 
-          nutrient: "Phosphorus (P)", 
-          level: `${predictedSoil.current_p.toFixed(2)} ppm`, 
-          depletionPrediction: gapAnalysis.statuses.P, 
-          difference: parseFloat(gapAnalysis.differences.diffP.toFixed(2)),
-          targetMin: gapAnalysis.requirements.P.min,
-          targetMax: gapAnalysis.requirements.P.max
+          nutrient: "Phosphorus (P)", level: gapAnalysis.currentLevels.P.toFixed(2), 
+          depletionPrediction: gapAnalysis.statuses.P, difference: gapAnalysis.differences.diffP,
+          targetMin: gapAnalysis.requirements.P.min, targetMax: gapAnalysis.requirements.P.max,
+          breakdown: gapAnalysis.breakdown.P // Breakdown data is mapped here
         },
         { 
-          nutrient: "Potassium (K)", 
-          level: `${predictedSoil.current_k.toFixed(2)} ppm`, 
-          depletionPrediction: gapAnalysis.statuses.K, 
-          difference: parseFloat(gapAnalysis.differences.diffK.toFixed(2)),
-          targetMin: gapAnalysis.requirements.K.min,
-          targetMax: gapAnalysis.requirements.K.max
+          nutrient: "Potassium (K)", level: gapAnalysis.currentLevels.K.toFixed(2), 
+          depletionPrediction: gapAnalysis.statuses.K, difference: gapAnalysis.differences.diffK,
+          targetMin: gapAnalysis.requirements.K.min, targetMax: gapAnalysis.requirements.K.max,
+          breakdown: gapAnalysis.breakdown.K // Breakdown data is mapped here
         }
       ],
       alternativeSuggestions,
@@ -120,7 +113,7 @@ exports.getRotationPlan = async (req, res) => {
     });
     const savedPlan = await newPlan.save();
     
-    // වෙනස්කම: සේව් වූ Plan එකේ ID එක Frontend එකට යවමු (පසුව Alternatives Update කිරීමට)
+    // සේව් වූ Plan එකේ ID එක Frontend එකට යවමු (පසුව Alternatives Update කිරීමට)
     finalData.planId = savedPlan._id;
 
     res.status(200).json(finalData);
@@ -131,7 +124,7 @@ exports.getRotationPlan = async (req, res) => {
   }
 };
 
-// අලුත් Function එක: Button එක click කරාම පමණක් AI වලින් Alternative crops 2ක් ගෙන එයි
+// Button එක click කරාම පමණක් AI වලින් Alternative crops 2ක් ගෙන එයි
 exports.getAlternativeCrops = async (req, res) => {
   try {
     const { planId, targetCrop, currentN, currentP, currentK, language } = req.body;
@@ -144,7 +137,6 @@ exports.getAlternativeCrops = async (req, res) => {
     const cleanText = altResponse.response.text().replace(/\`\`\`json/g, '').replace(/\n\`\`\`/g, '').trim();
     const alternativeSuggestions = JSON.parse(cleanText);
 
-    // Database එකේ ඇති කලින් සේව් කරපු Record එක අලුත් AI crops වලින් Update කරන්න
     if (planId) {
        await RotationPlan.findOneAndUpdate(
          { _id: planId, user: userId },
