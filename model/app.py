@@ -25,9 +25,6 @@ app.add_middleware(
 )
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-# වැදගත්: දැන් ඔබේ Training script එකේ හැදෙන model නම npk_research_model.pkl විය හැක.
-# එසේනම් පහත model_path සහ scaler_path වල නම් වෙනස් කරගන්න. 
-# (මම මෙහි දැනට ඔබේ කලින් තිබූ පරණ නම්ම භාවිතා කර ඇත.)
 MODEL_DIR = os.path.join(CURRENT_DIR, "saved_models")
 DATA_DIR = os.path.join(CURRENT_DIR, "data")
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -43,8 +40,6 @@ crop_rec_mlb = None
 
 def load_npk_predictor():
     global npk_model, npk_scaler
-    # මෙහි නම් ඔබගේ Training Code එකෙන් save කළ නම් වලට ගැලපෙන සේ වෙනස් කරගන්න 
-    # (උදා: "npk_research_model.pkl")
     model_path = os.path.join(MODEL_DIR, "npk_research_model.pkl") 
     scaler_path = os.path.join(MODEL_DIR, "npk_research_scaler.pkl")
     
@@ -88,14 +83,11 @@ def load_crop_rec_models():
 
 SQ_FT_PER_ACRE = 43560.0
 
-# අලුතින් Environmental factors තුන ලබා ගනී
-# main.py හි calculate_current_npk ශ්‍රිතය මෙලෙස නිවැරදි කරන්න
 
-def calculate_current_npk(baseline, past_crops, soil_type, ph_level, rainfall):
+def calculate_current_npk(past_crops):
     global npk_model, npk_scaler, chem_dict
     
     if npk_model is None or npk_scaler is None or chem_dict is None:
-        print("[ERROR] ML model or chemical composition missing.")
         return 0, 0, 0, []
     
     total_n_added_per_sqft = 0.0
@@ -118,66 +110,35 @@ def calculate_current_npk(baseline, past_crops, soil_type, ph_level, rainfall):
         sq_ft = float(crop.landSize) * SQ_FT_PER_ACRE if float(crop.landSize) > 0 else SQ_FT_PER_ACRE
         total_months += duration
         
-        # Fertilizers + Pesticides දෙකම එකතු කරන්න
-        all_chemicals = crop.fertilizers + crop.pesticides
+        all_chemicals = crop.fertilizers
         for chem in all_chemicals:
             if chem.name in chem_dict:
-                comp = chem_dict[chem.name]  # {'N': x, 'P': y, 'K': z}
-                n_val = comp['N']
-                p_val = comp['P']
-                k_val = comp['K']
-                
+                comp = chem_dict[chem.name]
                 multiplier = chem.amount_g / 100.0
-                total_added_n = n_val * multiplier
-                total_added_p = p_val * multiplier
-                total_added_k = k_val * multiplier
+                added_n = (comp['N'] * multiplier) / sq_ft
+                added_p = (comp['P'] * multiplier) / sq_ft
+                added_k = (comp['K'] * multiplier) / sq_ft
                 
-                added_n_per_sqft = total_added_n / sq_ft
-                added_p_per_sqft = total_added_p / sq_ft
-                added_k_per_sqft = total_added_k / sq_ft
-                
-                total_n_added_per_sqft += added_n_per_sqft
-                total_p_added_per_sqft += added_p_per_sqft
-                total_k_added_per_sqft += added_k_per_sqft
+                total_n_added_per_sqft += added_n
+                total_p_added_per_sqft += added_p
+                total_k_added_per_sqft += added_k
                 
                 chemical_breakdown.append({
-                    "name": chem.name,
-                    "amount_g": chem.amount_g,
-                    "base_100g": {"N": float(n_val), "P": float(p_val), "K": float(k_val)},
-                    "added": {
-                        "N": float(added_n_per_sqft), 
-                        "P": float(added_p_per_sqft), 
-                        "K": float(added_k_per_sqft)
-                    }
+                    "name": chem.name, "amount_g": chem.amount_g,
+                    "base_100g": {"N": float(comp['N']), "P": float(comp['P']), "K": float(comp['K'])},
+                    "added": {"N": float(added_n), "P": float(added_p), "K": float(added_k)}
                 })
-            else:
-                print(f"Warning: Chemical '{chem.name}' not found in composition dict.")
-    
-    base_n = baseline.get('N', 50.0)
-    base_p = baseline.get('P', 20.0)
-    base_k = baseline.get('K', 100.0)
-    
-    # One-hot encoding for soil type
-    soil_sandy = 1.0 if soil_type == 'Sandy' else 0.0
-    soil_loam  = 1.0 if soil_type == 'Loam' else 0.0
-    soil_clay  = 1.0 if soil_type == 'Clay' else 0.0
-
-    # Features පෙළ ගැස්ම (training code එකට ගැලපෙන ලෙස)
-    features = np.array([[
-        base_n, base_p, base_k, 
-        total_n_added_per_sqft, total_p_added_per_sqft, total_k_added_per_sqft, 
-        total_months, 
-        ph_level, rainfall, 
-        soil_sandy, soil_loam, soil_clay
-    ]])
-    
+                
+    features = np.array([[total_n_added_per_sqft, total_p_added_per_sqft, total_k_added_per_sqft, total_months]])
     features_scaled = npk_scaler.transform(features)
     pred = npk_model.predict(features_scaled)[0]
     
-    current_n = max(0, pred[0])
-    current_p = max(0, pred[1])
-    current_k = max(0, pred[2])
-    return current_n, current_p, current_k, chemical_breakdown
+    # Force Absolute Positive values for Additions
+    ml_n = max(0.0, float(pred[0]))
+    ml_p = max(0.0, float(pred[1]))
+    ml_k = max(0.0, float(pred[2]))
+    
+    return ml_n, ml_p, ml_k, chemical_breakdown
 
 # ---------- Pydantic Models ----------
 class ChemicalItem(BaseModel):
@@ -192,19 +153,13 @@ class CropHistory(BaseModel):
     endMonth: str
     endYear: str
     fertilizers: List[ChemicalItem]
-    pesticides: List[ChemicalItem]
 
 class RotationRequest(BaseModel):
     targetCrop: str
     targetLandSize: float
-    # අලුතින් එක් කළ Variables
-    soilType: str
-    phLevel: float
-    rainfall: float
     currentMonth: str
     previousCrops: List[CropHistory]
     language: str
-    baselineNutrients: Dict[str, float]
 
 class GuidanceRequest(BaseModel):
     district: str
@@ -218,14 +173,11 @@ load_crop_rec_models()
 # ---------- Endpoints ----------
 @app.post("/predict_npk")
 async def predict_npk(req: RotationRequest):
-    # Controller එකෙන් ආපු Environmental variables මෙතැනින් function එකට යවයි
-    current_n, current_p, current_k, chemical_breakdown = calculate_current_npk(
-        req.baselineNutrients, req.previousCrops, req.soilType, req.phLevel, req.rainfall
-    )
+    ml_n, ml_p, ml_k, chemical_breakdown = calculate_current_npk(req.previousCrops)
     return {
-        "current_n": float(current_n),
-        "current_p": float(current_p),
-        "current_k": float(current_k),
+        "ml_n": float(ml_n),
+        "ml_p": float(ml_p),
+        "ml_k": float(ml_k),
         "chemical_breakdown": chemical_breakdown 
     }
 
