@@ -1,5 +1,3 @@
-// backend/src/models/RotationPlan.js
-
 const mongoose = require('mongoose');
 
 const chemicalSchema = new mongoose.Schema({
@@ -7,29 +5,20 @@ const chemicalSchema = new mongoose.Schema({
   amount_g: Number
 }, { _id: false });
 
-// අලුතින් එකතු කල Breakdown Schema එක
-const breakdownSchema = new mongoose.Schema({
-  base: Number,
-  ml: Number,
-  loss: Number
-}, { _id: false });
-
 const rotationPlanSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   targetCrop: { type: String, required: true },
-  targetLandSize: { type: Number, required: true },
-  soilType: { type: String }, 
-  phLevel: { type: Number },  
-  rainfall: { type: Number }, 
+  targetLandSize: { type: Number, required: true }, // Added land size
   currentMonth: { type: String, required: true },
   pastCrops: [{
     cropName: String,
-    landSize: Number, 
+    landSize: Number, // Added land size
     startMonth: String,
     startYear: String,
     endMonth: String,
     endYear: String,
-    fertilizers: [chemicalSchema]
+    fertilizers: [chemicalSchema], // Changed to Array
+    pesticides: [chemicalSchema]   // Changed to Array
   }],
   targetEvaluation: {
     isSuitable: Boolean,
@@ -40,12 +29,9 @@ const rotationPlanSchema = new mongoose.Schema({
     nutrient: String,
     level: String,
     depletionPrediction: String,
-    difference: Number,
-    targetMin: Number, 
-    targetMax: Number,
-    breakdown: breakdownSchema // <--- මෙතනට Breakdown එකතු කර ඇත
+    difference: Number 
   }],
-  alternativeSuggestions: [{ 
+  alternativeSuggestions: [{ // Added for alternatives
     cropName: String,
     reasons: [String]
   }],
