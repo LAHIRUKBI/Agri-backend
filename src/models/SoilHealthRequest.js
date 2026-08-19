@@ -16,6 +16,12 @@ const soilHealthRequestSchema = new mongoose.Schema(
       required: true
     },
     location: String,
+    visitAddress: String,
+    addressSource: {
+      type: String,
+      enum: ['profile', 'manual'],
+      default: 'manual'
+    },
     cropType: String,
     season: String,
     language: {

@@ -1,5 +1,6 @@
 const SoilHealthRecord = require('../models/SoilHealthRecord');
 const SoilHealthRequest = require('../models/SoilHealthRequest');
+const User = require('../models/User');
 const {
   createImageOnlyAssessment,
   createAssessmentFromReadings,
@@ -8,6 +9,61 @@ const {
 
 function ensureOwner(req, ownerId) {
   return String(req.user.id) === String(ownerId);
+}
+
+function mapImageAssessment(result) {
+  return {
+    score: result.score,
+    classification: result.classification,
+    confidence: result.confidence,
+    soilType: result.soilType
+  };
+}
+
+function buildProfileAddress(user) {
+  if (!user) return '';
+
+  return [
+    user.address,
+    user.addressLine2,
+    user.city,
+    user.state,
+    user.country,
+    user.zipCode
+  ]
+    .filter(Boolean)
+    .join(', ')
+    .trim();
+}
+
+async function resolveVisitAddress(userId, providedAddress) {
+  const farmer = await User.findById(userId).select('address addressLine2 city state country zipCode');
+  const profileAddress = buildProfileAddress(farmer);
+  const manualAddress = String(providedAddress || '').trim();
+
+  if (manualAddress) {
+    return { visitAddress: manualAddress, addressSource: 'manual' };
+  }
+
+  if (profileAddress) {
+    return { visitAddress: profileAddress, addressSource: 'profile' };
+  }
+
+  return null;
+}
+
+async function deleteRequestWithLinkedRecord(requestId) {
+  const request = await SoilHealthRequest.findById(requestId);
+  if (!request) {
+    return false;
+  }
+
+  if (request.finalRecord) {
+    await SoilHealthRecord.findByIdAndDelete(request.finalRecord);
+  }
+
+  await request.deleteOne();
+  return true;
 }
 
 async function generateQuickImageAssessment(imageMetrics, metadata) {
@@ -70,10 +126,18 @@ exports.runQuickImageAssessment = async (req, res) => {
 
 exports.createSensorRequest = async (req, res) => {
   try {
-    const { district, location, cropType, season, landSize, preferredDate, farmerNotes, imageMetrics, language } = req.body;
+    const { district, location, visitAddress, cropType, season, landSize, preferredDate, farmerNotes, imageMetrics, language } = req.body;
 
     if (!district || !imageMetrics) {
       return res.status(400).json({ success: false, message: 'District and image metrics are required.' });
+    }
+
+    const resolvedAddress = await resolveVisitAddress(req.user.id, visitAddress);
+    if (!resolvedAddress) {
+      return res.status(400).json({
+        success: false,
+        message: 'A visit address is required. Add it in your profile or enter it when creating the request.'
+      });
     }
 
     const imageAssessment = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language });
@@ -82,6 +146,8 @@ exports.createSensorRequest = async (req, res) => {
       farmer: req.user.id,
       district,
       location,
+      visitAddress: resolvedAddress.visitAddress,
+      addressSource: resolvedAddress.addressSource,
       cropType,
       season,
       language,
@@ -89,12 +155,7 @@ exports.createSensorRequest = async (req, res) => {
       preferredDate,
       farmerNotes,
       imageMetrics,
-      imageAssessment: {
-        score: imageAssessment.score,
-        classification: imageAssessment.classification,
-        confidence: imageAssessment.confidence,
-        soilType: imageAssessment.soilType
-      }
+      imageAssessment: mapImageAssessment(imageAssessment)
     });
 
     res.status(201).json({ success: true, data: request });
@@ -119,6 +180,108 @@ exports.getMyRequests = async (req, res) => {
       .sort({ createdAt: -1 });
 
     res.status(200).json({ success: true, data: requests });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.updateMyRequest = async (req, res) => {
+  try {
+    const request = await SoilHealthRequest.findById(req.params.id);
+    if (!request) {
+      return res.status(404).json({ success: false, message: 'Request not found.' });
+    }
+
+    if (!ensureOwner(req, request.farmer)) {
+      return res.status(403).json({ success: false, message: 'Not authorized to update this request.' });
+    }
+
+    if (request.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Only pending requests can be edited.' });
+    }
+
+    const {
+      district,
+      location,
+      visitAddress,
+      cropType,
+      season,
+      language,
+      landSize,
+      preferredDate,
+      farmerNotes
+    } = req.body;
+
+    if (!district) {
+      return res.status(400).json({ success: false, message: 'District is required.' });
+    }
+
+    request.district = district;
+    request.location = location;
+    const resolvedAddress = await resolveVisitAddress(req.user.id, visitAddress);
+    if (!resolvedAddress) {
+      return res.status(400).json({
+        success: false,
+        message: 'A visit address is required. Add it in your profile or enter it when updating the request.'
+      });
+    }
+
+    request.visitAddress = resolvedAddress.visitAddress;
+    request.addressSource = resolvedAddress.addressSource;
+    request.cropType = cropType;
+    request.season = season;
+    request.language = language || request.language;
+    request.landSize = landSize;
+    request.preferredDate = preferredDate || undefined;
+    request.farmerNotes = farmerNotes;
+
+    const refreshedImageAssessment = await generateQuickImageAssessment(request.imageMetrics, {
+      district,
+      cropType,
+      season,
+      language: request.language
+    });
+    request.imageAssessment = mapImageAssessment(refreshedImageAssessment);
+
+    await request.save();
+
+    const updatedRequest = await SoilHealthRequest.findById(request._id).populate('assignedAdmin', 'name email phoneNumber');
+    res.status(200).json({ success: true, data: updatedRequest, message: 'Request updated successfully.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.deleteMyRequestById = async (req, res) => {
+  try {
+    const request = await SoilHealthRequest.findById(req.params.id);
+    if (!request) {
+      return res.status(404).json({ success: false, message: 'Request not found.' });
+    }
+
+    if (!ensureOwner(req, request.farmer)) {
+      return res.status(403).json({ success: false, message: 'Not authorized to delete this request.' });
+    }
+
+    await deleteRequestWithLinkedRecord(request._id);
+
+    res.status(200).json({ success: true, message: 'Sensor request deleted.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.clearMyRequests = async (req, res) => {
+  try {
+    const requests = await SoilHealthRequest.find({ farmer: req.user.id }).select('_id');
+
+    if (requests.length === 0) {
+      return res.status(200).json({ success: true, message: 'No sensor requests to clear.' });
+    }
+
+    await Promise.all(requests.map((request) => deleteRequestWithLinkedRecord(request._id)));
+
+    res.status(200).json({ success: true, message: 'All sensor requests cleared.' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -221,6 +384,36 @@ exports.completeRequest = async (req, res) => {
     await request.save();
 
     res.status(200).json({ success: true, data: { request, record } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.deleteAdminRequestById = async (req, res) => {
+  try {
+    const deleted = await deleteRequestWithLinkedRecord(req.params.id);
+
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: 'Request not found.' });
+    }
+
+    res.status(200).json({ success: true, message: 'Request deleted successfully.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.clearAdminRequests = async (req, res) => {
+  try {
+    const requests = await SoilHealthRequest.find({}).select('_id');
+
+    if (requests.length === 0) {
+      return res.status(200).json({ success: true, message: 'No incoming requests to clear.' });
+    }
+
+    await Promise.all(requests.map((request) => deleteRequestWithLinkedRecord(request._id)));
+
+    res.status(200).json({ success: true, message: 'All incoming requests cleared.' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
