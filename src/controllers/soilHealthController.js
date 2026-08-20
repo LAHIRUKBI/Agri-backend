@@ -86,11 +86,20 @@ async function generateQuickImageAssessment(imageMetrics, metadata) {
 
     const payload = await response.json();
     if (!payload.success || !payload.predictedReadings) {
+      if (payload.isSoilImage === False || payload.isSoilImage === false) {
+        throw new Error(payload.message || 'This image is not a valid close-up soil photo.');
+      }
       throw new Error(payload.message || 'Python soil-image model did not return predictions.');
     }
 
     return createAssessmentFromReadings(payload.predictedReadings, { ...metadata, imageMetrics }, 'image_only');
   } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('valid close-up soil photo') || error.message.includes('does not appear to be a valid'))
+    ) {
+      throw error;
+    }
     return createImageOnlyAssessment(imageMetrics, metadata);
   }
 }
@@ -103,7 +112,12 @@ exports.runQuickImageAssessment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'District and image metrics are required.' });
     }
 
-    const result = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language });
+    let result;
+    try {
+      result = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language });
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
 
     const record = await SoilHealthRecord.create({
       farmer: req.user.id,
@@ -140,7 +154,12 @@ exports.createSensorRequest = async (req, res) => {
       });
     }
 
-    const imageAssessment = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language });
+    let imageAssessment;
+    try {
+      imageAssessment = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language });
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
 
     const request = await SoilHealthRequest.create({
       farmer: req.user.id,
@@ -235,12 +254,17 @@ exports.updateMyRequest = async (req, res) => {
     request.preferredDate = preferredDate || undefined;
     request.farmerNotes = farmerNotes;
 
-    const refreshedImageAssessment = await generateQuickImageAssessment(request.imageMetrics, {
-      district,
-      cropType,
-      season,
-      language: request.language
-    });
+    let refreshedImageAssessment;
+    try {
+      refreshedImageAssessment = await generateQuickImageAssessment(request.imageMetrics, {
+        district,
+        cropType,
+        season,
+        language: request.language
+      });
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
     request.imageAssessment = mapImageAssessment(refreshedImageAssessment);
 
     await request.save();
