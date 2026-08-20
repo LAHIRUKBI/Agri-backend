@@ -326,6 +326,55 @@ class SoilImageAssessmentRequest(BaseModel):
     language: str = "English"
     imageMetrics: Dict[str, float]
 
+
+def classify_soil_image_metrics(image_metrics: Dict[str, float]):
+    brightness = float(image_metrics.get("brightness", 0.0))
+    texture_score = float(image_metrics.get("textureScore", 0.0))
+    red_mean = float(image_metrics.get("redMean", 0.0))
+    green_mean = float(image_metrics.get("greenMean", 0.0))
+    blue_mean = float(image_metrics.get("blueMean", 0.0))
+    earthy_ratio = float(image_metrics.get("earthyRatio", 0.0))
+    blue_ratio = float(image_metrics.get("blueRatio", 0.0))
+    green_ratio = float(image_metrics.get("greenRatio", 0.0))
+    edge_density = float(image_metrics.get("edgeDensity", 0.0))
+
+    channel_spread = max(red_mean, green_mean, blue_mean) - min(red_mean, green_mean, blue_mean)
+
+    checks = {
+        "earth_dominance": earthy_ratio >= 0.34,
+        "low_blue_scene": blue_ratio <= 0.22,
+        "low_green_scene": green_ratio <= 0.28,
+        "close_texture": texture_score >= 24 and edge_density >= 0.12,
+        "balanced_light": 35 <= brightness <= 205,
+        "balanced_channels": channel_spread <= 105 and red_mean >= blue_mean - 5
+    }
+
+    passed_checks = sum(1 for passed in checks.values() if passed)
+    confidence = round(passed_checks / len(checks), 2)
+    is_soil_image = passed_checks >= 5 and checks["earth_dominance"] and checks["close_texture"]
+
+    failed_reasons = []
+    if not checks["earth_dominance"]:
+        failed_reasons.append("Earth-tone pixel dominance is too low.")
+    if not checks["close_texture"]:
+        failed_reasons.append("Image does not look like a close-up soil texture.")
+    if not checks["low_blue_scene"]:
+        failed_reasons.append("Too much sky or water-like blue content detected.")
+    if not checks["low_green_scene"]:
+        failed_reasons.append("Too much vegetation-like green content detected.")
+    if not checks["balanced_light"]:
+        failed_reasons.append("Lighting range is not suitable for a soil close-up.")
+    if not checks["balanced_channels"]:
+        failed_reasons.append("Color balance does not match typical soil imagery.")
+
+    return {
+        "is_soil_image": is_soil_image,
+        "confidence": confidence,
+        "label": "soil_close_up" if is_soil_image else "non_soil_or_wide_scene",
+        "failed_reasons": failed_reasons,
+        "checks": checks
+    }
+
 # ---------- Start-up Loaders ----------
 load_npk_predictor()
 load_agrochemical_data()
@@ -350,10 +399,21 @@ async def predict_npk(req: RotationRequest):
 async def soil_image_assess(req: SoilImageAssessmentRequest):
     global soil_image_model, soil_image_feature_columns, soil_image_target_columns
 
+    image_classification = classify_soil_image_metrics(req.imageMetrics)
+    if not image_classification["is_soil_image"]:
+        return {
+            "success": False,
+            "message": "This image does not appear to be a valid close-up soil photo.",
+            "isSoilImage": False,
+            "imageClassification": image_classification
+        }
+
     if soil_image_model is None or soil_image_feature_columns is None or soil_image_target_columns is None:
         return {
             "success": False,
-            "message": "Soil image model is not trained yet."
+            "message": "Soil image model is not trained yet.",
+            "isSoilImage": True,
+            "imageClassification": image_classification
         }
 
     raw_row = {
@@ -378,7 +438,9 @@ async def soil_image_assess(req: SoilImageAssessmentRequest):
 
     return {
         "success": True,
-        "predictedReadings": predicted
+        "predictedReadings": predicted,
+        "isSoilImage": True,
+        "imageClassification": image_classification
     }
 
 @app.get("/get_requirements/{crop_name}")
