@@ -1,5 +1,0 @@
-[price_model] path=D:\Reaserch\Agri-backend\model\training_runs\run_001\model_price.pkl
-[price_model] exists=True
-[price_model] patched SimpleImputer _fill_dtype count=4
-[price_model] loaded=True
-INFO:     127.0.0.1:8731 - "GET /docs HTTP/1.1" 200 OK
