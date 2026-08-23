@@ -67,9 +67,9 @@ exports.getRotationPlan = async (req, res) => {
         aiSoilRemedy: aiSoilRemedy
       },
       soilNutrientLevels: [
-        { nutrient: "Nitrogen (N)", level: `${predictedSoil.current_n.toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.N, difference: parseFloat(gapAnalysis.differences.diffN.toFixed(2)) },
-        { nutrient: "Phosphorus (P)", level: `${predictedSoil.current_p.toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.P, difference: parseFloat(gapAnalysis.differences.diffP.toFixed(2)) },
-        { nutrient: "Potassium (K)", level: `${predictedSoil.current_k.toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.K, difference: parseFloat(gapAnalysis.differences.diffK.toFixed(2)) }
+        { nutrient: "Nitrogen (N)", level: `${predictedSoil.current_n.toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.N, difference: parseFloat(gapAnalysis.differences.diffN.toFixed(2)),targetMin: gapAnalysis.requirements.N.min,targetMax: gapAnalysis.requirements.N.max },
+        { nutrient: "Phosphorus (P)", level: `${predictedSoil.current_p.toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.P, difference: parseFloat(gapAnalysis.differences.diffP.toFixed(2)),targetMin: gapAnalysis.requirements.P.min,targetMax: gapAnalysis.requirements.P.max },
+        { nutrient: "Potassium (K)", level: `${predictedSoil.current_k.toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.K, difference: parseFloat(gapAnalysis.differences.diffK.toFixed(2)),targetMin: gapAnalysis.requirements.K.min,targetMax: gapAnalysis.requirements.K.max }
       ],
       alternativeSuggestions,
       // අලුතින් එකතු කල දත්ත 

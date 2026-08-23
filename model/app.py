@@ -275,6 +275,12 @@ def calculate_current_npk(baseline, past_crops):
     features_scaled = npk_scaler.transform(features)
     pred = npk_model.predict(features_scaled)[0]
     current_n, current_p, current_k = max(0, pred[0]), max(0, pred[1]), max(0, pred[2])
+    if total_n_added == 0:
+        current_n = max(0, base_n - (total_months * 1.2))
+    if total_p_added == 0:
+        current_p = max(0, base_p - (total_months * 0.4))
+    if total_k_added == 0:
+        current_k = max(0, base_k - (total_months * 0.8))
     return current_n, current_p, current_k, chemical_breakdown
 
 # ---------- Rule‑based Suitability Check ----------
