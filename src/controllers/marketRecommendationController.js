@@ -1,6 +1,7 @@
 const axios = require("axios");
 const districtMarketMap = require("../utils/districtMarketMap");
-const { generateGroqInsights } = require("../utils/groqInsightGenerator");
+const groqInsightGenerator = require("../utils/groqInsightGenerator");
+const weatherForecastService = require("../services/weatherForecastService");
 const {
   buildPriceRecommendationDecision,
 } = require("../services/priceRecommendationPolicy");
@@ -611,12 +612,21 @@ exports.recommendBestMarket = async (req, res) => {
     const bestPredictedMarketResult = toMarketResult(bestPredictedMarket);
     const bestFarmerReturnMarketResult = toMarketResult(bestFarmerReturnMarket);
     const recommendedMarketResult = toMarketResult(recommendedMarket);
-    const aiInsights = await generateGroqInsights({
+    let weatherContext = null;
+    try {
+      weatherContext = await weatherForecastService.getSevenDayRainfallContext(
+        normalizedDistrict
+      );
+    } catch (error) {
+      weatherContext = null;
+    }
+    const aiInsights = await groqInsightGenerator.generateGroqInsights({
       input,
       nearestMarket: nearestMarketResult,
       bestPredictedMarket: bestPredictedMarketResult,
       recommendedMarket: recommendedMarketResult,
       actionDecision: recommendedMarketResult.action_decision,
+      weatherContext,
       comparisons: frontendComparisons,
       comparisonStrength,
       comparisonNote,

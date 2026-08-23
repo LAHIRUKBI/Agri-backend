@@ -76,6 +76,54 @@ const getTrendText = (market) => {
 
 const hasExactNumber = (value) => /(?:rs\.?|lkr|\d)/i.test(value);
 
+const UNCERTAIN_ACTION_LANGUAGE_PATTERNS = [
+  /\bsell\b[^.!?\n]{0,40}\b(?:now|immediately|before)\b/i,
+  /\bwait\b/i,
+  /\bhold\b/i,
+  /\b(?:delay|postpone)\s+(?:the\s+)?(?:sale|selling)\b/i,
+];
+
+const getCanonicalActionDecision = (recommendationData) =>
+  String(
+    recommendationData?.actionDecision ||
+      recommendationData?.recommendedMarket?.action_decision ||
+      "UNCERTAIN"
+  ).toUpperCase();
+
+const violatesActionLanguagePolicy = (value, canonicalActionDecision) => {
+  if (canonicalActionDecision !== "UNCERTAIN") {
+    return false;
+  }
+
+  return UNCERTAIN_ACTION_LANGUAGE_PATTERNS.some((pattern) =>
+    pattern.test(value)
+  );
+};
+
+const getFallbackWeatherMessages = (weatherContext) => {
+  const rainfallRisk = String(weatherContext?.rainfall_risk || "").toUpperCase();
+
+  if (rainfallRisk === "HIGH") {
+    return {
+      whyThisMatters:
+        "Heavy rainfall is forecast for the coming market period and may make harvesting, farm access, transport, handling, or safe storage more difficult.",
+      suggestedAction:
+        "Protect exposed produce, arrange transport early, confirm buyer availability, and secure storage while monitoring forecast changes.",
+    };
+  }
+
+  if (rainfallRisk === "MODERATE") {
+    return {
+      whyThisMatters:
+        "Some rainfall risk is forecast for the coming market period, so routine harvesting and transport preparation may be helpful.",
+      suggestedAction:
+        "Check access, transport, produce protection, and storage arrangements while monitoring forecast changes.",
+    };
+  }
+
+  return null;
+};
+
 const createFallbackInsights = ({
   input,
   nearestMarket,
@@ -84,6 +132,7 @@ const createFallbackInsights = ({
   actionDecision,
   comparisonStrength,
   isCloseCall,
+  weatherContext,
 }) => {
   const crop = input?.crop || "this crop";
   const district = input?.district || "the farmer district";
@@ -102,27 +151,42 @@ const createFallbackInsights = ({
     : `For ${crop} in ${district}, ${bestMarketName} shows a stronger trend signal, but it is still only guidance.`;
 
   const suggestedAction = `Check current buyer offers, transport cost, storage, and spoilage risk before choosing when or where to sell.`;
+  const weatherMessages = getFallbackWeatherMessages(weatherContext);
 
   return {
     recommendation,
     prediction_summary: `${bestMarketName} shows ${trendText}, while ${nearestMarketName} remains the nearest option for ${crop} in ${district}.`,
     price_movement: `The experimental price direction for ${bestMarketName} is predicted as ${prediction}, but the canonical selling guidance remains ${canonicalDecision.toLowerCase()}.`,
     prediction_strength: predictionStrength,
-    why_this_matters: `${nearestMarketName} affects practical selling cost for farmers in ${district}, while ${bestMarketName} may show a different earning opportunity for ${crop}.`,
-    suggested_action: suggestedAction,
+    why_this_matters:
+      weatherMessages?.whyThisMatters ||
+      `${nearestMarketName} affects practical selling cost for farmers in ${district}, while ${bestMarketName} may show a different earning opportunity for ${crop}.`,
+    suggested_action:
+      weatherMessages?.suggestedAction || suggestedAction,
   };
 };
 
-const sanitizeInsights = (insights, fallbackInsights) => {
+const sanitizeInsights = (
+  insights,
+  fallbackInsights,
+  recommendationData = {}
+) => {
   if (!insights || typeof insights !== "object" || Array.isArray(insights)) {
     return fallbackInsights;
   }
+
+  const canonicalActionDecision = getCanonicalActionDecision(recommendationData);
 
   return INSIGHT_FIELDS.reduce((cleaned, field) => {
     const value = insights[field];
     const trimmedValue = typeof value === "string" ? value.trim() : "";
     cleaned[field] =
-      trimmedValue && !hasExactNumber(trimmedValue)
+      trimmedValue &&
+      !hasExactNumber(trimmedValue) &&
+      !violatesActionLanguagePolicy(
+        trimmedValue,
+        canonicalActionDecision
+      )
         ? trimmedValue
         : fallbackInsights[field];
     return cleaned;
@@ -169,6 +233,7 @@ const buildPrompt = ({
   comparisonNote,
   isCloseCall,
   probabilityDelta,
+  weatherContext,
 }) => {
   const nearestCurrentEarnings = getEstimatedCurrentEarnings(nearestMarket);
   const bestCurrentEarnings = getEstimatedCurrentEarnings(bestPredictedMarket);
@@ -187,6 +252,7 @@ const buildPrompt = ({
     canonical_action_decision:
       actionDecision || recommendedMarket?.action_decision || "UNCERTAIN",
     learned_model_action_authorized: false,
+    weather_context: weatherContext || null,
     nearest_market: {
       ...nearestMarket,
       estimated_current_earnings: nearestCurrentEarnings,
@@ -323,6 +389,23 @@ No extra explanation.
 - Do not tell the farmer to wait or sell now when the canonical action is UNCERTAIN.
 - Keep the nearest mapped market as the practical default; do not redirect the farmer using the experimental model.
 
+WEATHER RULES:
+
+- Use only the supplied weather_context.
+- Never invent rainfall amounts, probabilities, locations, or risk levels.
+- Do not recalculate rainfall_risk.
+- Weather is an operational advisory only.
+- Never claim rainfall guarantees a price increase or decrease.
+- Never say rainfall caused the experimental price estimate.
+- Weather must never override canonical_action_decision.
+- If weather_context is null, omit weather advice completely.
+- For HIGH rainfall risk, mention possible harvesting, farm-access, transport, handling, or spoilage difficulties.
+- For MODERATE rainfall risk, suggest practical preparation without alarmist wording.
+- For LOW rainfall risk, avoid unnecessary weather warnings.
+- Do not describe forecast weather as historical or observed weather.
+- When canonical_action_decision is UNCERTAIN, do not instruct the farmer to sell now, sell immediately, sell before rainfall, wait, hold, or delay selling.
+- For UNCERTAIN, limit weather advice to operational preparation such as arranging transport early, protecting exposed produce, confirming buyer availability, securing storage, or monitoring forecast changes.
+
 OUTPUT FORMAT:
 
 {
@@ -357,7 +440,7 @@ const generateGroqInsights = async (recommendationData) => {
           {
             role: "system",
             content:
-              "You write careful agricultural market insights. Return valid JSON only and never include exact numeric values in user-facing text.",
+              "You write careful agricultural market insights. Return valid JSON only, never include exact numeric values in user-facing text, use only supplied forecast data, and never override the canonical action decision.",
           },
           {
             role: "user",
@@ -370,7 +453,11 @@ const generateGroqInsights = async (recommendationData) => {
 
     const content = completion?.choices?.[0]?.message?.content;
     const parsedInsights = parseJsonContent(content);
-    return sanitizeInsights(parsedInsights, fallbackInsights);
+    return sanitizeInsights(
+      parsedInsights,
+      fallbackInsights,
+      recommendationData
+    );
   } catch (error) {
     return fallbackInsights;
   }
@@ -378,4 +465,7 @@ const generateGroqInsights = async (recommendationData) => {
 
 module.exports = {
   generateGroqInsights,
+  buildPrompt,
+  createFallbackInsights,
+  sanitizeInsights,
 };
