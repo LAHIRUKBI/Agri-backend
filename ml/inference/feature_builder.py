@@ -257,6 +257,45 @@ def _take_past_rows(
     return past.tail(limit).reset_index(drop=True)
 
 
+def resolve_latest_exact_market_price(
+    history_df: pd.DataFrame,
+    crop: str,
+    district: str,
+    market: str,
+) -> Dict | None:
+    crop_norm = str(crop).strip().lower()
+    district_norm = str(district).strip().lower()
+    market_norm = str(market).strip().lower()
+    subset = history_df[
+        (history_df["crop"] == crop_norm) &
+        (history_df["district"] == district_norm) &
+        (history_df["market"] == market_norm)
+    ].copy()
+
+    if subset.empty:
+        return None
+
+    latest = subset.sort_values(by=["year", "month", "week_number"]).iloc[-1]
+    observed_at = None
+    age_days = None
+
+    if "date" in latest.index:
+        parsed_date = pd.to_datetime(latest["date"], errors="coerce")
+        if not pd.isna(parsed_date):
+            observed_at = parsed_date.date().isoformat()
+            age_days = max((datetime.today().date() - parsed_date.date()).days, 0)
+
+    return {
+        "price_rs_kg": float(latest["price_rs_kg"]),
+        "observed_at": observed_at,
+        "age_days": age_days,
+        "year": int(latest["year"]),
+        "month": int(latest["month"]),
+        "week_number": int(latest["week_number"]),
+        "source": "exact_crop_district_market_history",
+    }
+
+
 def _latest_market_price(
     history_df: pd.DataFrame,
     crop: str,
@@ -393,7 +432,8 @@ def build_features_for_period(
         (weather_df["week_number"] == week_number)
     ]
 
-    if len(weather_row) > 0:
+    weather_available = len(weather_row) > 0
+    if weather_available:
         weather_row = weather_row.iloc[0]
         temp_mean = float(weather_row["temp_mean"])
         rainfall_total = float(weather_row["rainfall_total"])
@@ -414,7 +454,8 @@ def build_features_for_period(
         (inflation_df["week_number"] == week_number)
     ]
 
-    if len(inflation_row) > 0:
+    inflation_available = len(inflation_row) > 0
+    if inflation_available:
         inflation_row = inflation_row.iloc[0]
         inflation_rate = float(inflation_row["inflation_rate"])
         inflation_mom_change = float(inflation_row["inflation_mom_change"])
@@ -453,6 +494,22 @@ def build_features_for_period(
         "latest_market_price_rs_kg": latest_market_price,
         "latest_market_price_source": latest_market_price_source,
         "input_price_rs_kg": price_rs_kg,
+        "weather_missing": not weather_available,
+        "inflation_missing": not inflation_available,
+        "context_quality": (
+            "complete" if weather_available and inflation_available else "incomplete"
+        ),
+        "missing_context": [
+            name
+            for name, is_missing in (
+                ("weather", not weather_available),
+                ("inflation", not inflation_available),
+            )
+            if is_missing
+        ],
+        "exogenous_compatibility_note": (
+            "run_001 zero-filled numerical inputs preserved; missingness is metadata only"
+        ),
     }
 
     return feature_row, meta

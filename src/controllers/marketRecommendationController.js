@@ -1,16 +1,18 @@
 const axios = require("axios");
 const districtMarketMap = require("../utils/districtMarketMap");
 const { generateGroqInsights } = require("../utils/groqInsightGenerator");
+const {
+  buildPriceRecommendationDecision,
+} = require("../services/priceRecommendationPolicy");
 
 const ML_API_URL = process.env.ML_API_URL || "http://127.0.0.1:8000";
 const CLOSE_UP_PROBABILITY_DELTA = 0.03;
 const CLOSE_PRICE_DIFFERENCE_PCT = 0.02;
 const MARKET_TREND_BASIS = "predicted_price_vs_latest_market_price";
-const FARMER_DECISION_BASIS = "predicted_price_vs_farmer_entered_price";
 const MARKET_CONTEXT_SIGNAL_BASIS =
   "predicted_price_vs_latest_observed_market_price";
 const DIRECTION_MODEL_SIGNAL_NOTE =
-  "Direction model signal only; farmer outcome is calculated from predicted price and entered price.";
+  "Experimental direction-model signal only; it does not authorize a selling action.";
 
 const toFiniteNumber = (value) => {
   if (value == null || value === "") {
@@ -145,117 +147,32 @@ const buildMarketContextSignal = (predictedPrice, currentMarketPrice) => {
   };
 };
 
-const getFarmerDecision = (predictedPrice, inputPrice) => {
-  if (
-    !Number.isFinite(predictedPrice) ||
-    !Number.isFinite(inputPrice) ||
-    inputPrice <= 0
-  ) {
-    return {
-      farmer_decision: "UNAVAILABLE",
-      farmer_decision_basis: FARMER_DECISION_BASIS,
-      farmer_decision_message:
-        "Farmer decision guidance is unavailable because the model estimate or entered current price is missing.",
-      farmer_price_change_rs: null,
-      farmer_price_change_pct: null,
-    };
-  }
-
-  const difference = getPriceDifference(predictedPrice, inputPrice);
-
-  if (difference.isClose) {
-    return {
-      farmer_decision: "SMALL_DIFFERENCE",
-      farmer_decision_basis: FARMER_DECISION_BASIS,
-      farmer_decision_message:
-        "The model estimate is close to your entered current price, so the difference may be small.",
-      farmer_price_change_rs: difference.changeRs,
-      farmer_price_change_pct: difference.changePct,
-    };
-  }
-
-  if (predictedPrice > inputPrice) {
-    return {
-      farmer_decision: "WAIT",
-      farmer_decision_basis: FARMER_DECISION_BASIS,
-      farmer_decision_message:
-        "Waiting may improve your return compared with your entered current price.",
-      farmer_price_change_rs: difference.changeRs,
-      farmer_price_change_pct: difference.changePct,
-    };
-  }
-
-  return {
-    farmer_decision: "SELL_NOW",
-    farmer_decision_basis: FARMER_DECISION_BASIS,
-    farmer_decision_message:
-      "Selling now may be safer because the model estimate is lower than your entered current price.",
-    farmer_price_change_rs: difference.changeRs,
-    farmer_price_change_pct: difference.changePct,
-  };
-};
-
-const buildFarmerOutcomeSignal = (predictedPrice, inputPrice) => {
-  if (
-    !Number.isFinite(predictedPrice) ||
-    !Number.isFinite(inputPrice) ||
-    inputPrice <= 0
-  ) {
-    return {
-      direction: "UNAVAILABLE",
-      basis: FARMER_DECISION_BASIS,
-      change_rs_per_kg: null,
-      change_pct: null,
-      message: "Price estimate unavailable.",
-    };
-  }
-
-  const difference = getPriceDifference(predictedPrice, inputPrice);
-
-  if (difference.isClose) {
-    return {
-      direction: "SMALL_DIFFERENCE",
-      basis: FARMER_DECISION_BASIS,
-      change_rs_per_kg: difference.changeRs,
-      change_pct: difference.changePct,
-      message: "The difference is small; choose the practical option.",
-    };
-  }
-
-  if (predictedPrice > inputPrice) {
-    return {
-      direction: "GAIN",
-      basis: FARMER_DECISION_BASIS,
-      change_rs_per_kg: difference.changeRs,
-      change_pct: difference.changePct,
-      message:
-        "Waiting may improve your return compared with your entered price.",
-    };
-  }
-
-  return {
-    direction: "LOSS",
-    basis: FARMER_DECISION_BASIS,
-    change_rs_per_kg: difference.changeRs,
-    change_pct: difference.changePct,
-    message: "Selling now may be safer based on this estimate.",
-  };
-};
-
-const buildPriceInterpretation = ({
-  predictedPrice,
-  currentMarketPrice,
-  inputPrice,
-}) => ({
-  ...getMarketTrend(predictedPrice, currentMarketPrice),
-  ...getFarmerDecision(predictedPrice, inputPrice),
-});
-
-const unavailablePriceInterpretation = buildPriceInterpretation({
+const unavailableCanonicalDecision = buildPriceRecommendationDecision({
+  currentPrice: null,
   predictedPrice: null,
-  currentMarketPrice: null,
-  inputPrice: null,
+  classifierPrediction: null,
+  upProbability: null,
+  downProbability: null,
+  contextQuality: "unavailable",
 });
+
+const unavailablePriceInterpretation = {
+  ...getMarketTrend(null, null),
+  ...unavailableCanonicalDecision,
+  farmer_decision: unavailableCanonicalDecision.action_decision,
+  farmer_decision_basis: unavailableCanonicalDecision.action_policy,
+  farmer_decision_message:
+    unavailableCanonicalDecision.action_decision_message,
+  farmer_price_change_rs: null,
+  farmer_price_change_pct: null,
+  farmer_outcome_signal: {
+    direction: unavailableCanonicalDecision.action_decision,
+    basis: unavailableCanonicalDecision.action_policy,
+    change_rs_per_kg: null,
+    change_pct: null,
+    message: unavailableCanonicalDecision.action_decision_message,
+  },
+};
 
 const getBestFarmerReturnMarket = (markets, fallbackMarket) => {
   return (
@@ -276,46 +193,10 @@ const getBestFarmerReturnMarket = (markets, fallbackMarket) => {
   );
 };
 
-const getRecommendedMarketSelection = ({
-  nearestMarket,
-  bestFarmerReturnMarket,
-  bestPredictedMarket,
-  hasPredictedPrice,
-}) => {
-  if (!hasPredictedPrice) {
-    return {
-      recommendedMarket: bestPredictedMarket,
-      recommendationBasis: "direction_probability_fallback",
-    };
-  }
-
-  const bestFarmerPrice = bestFarmerReturnMarket?.predicted_price_rs_kg;
-  const nearestPrice = nearestMarket?.predicted_price_rs_kg;
-
-  if (
-    Number.isFinite(bestFarmerPrice) &&
-    (!Number.isFinite(nearestPrice) || nearestPrice <= 0)
-  ) {
-    return {
-      recommendedMarket: bestFarmerReturnMarket,
-      recommendationBasis: "farmer_return",
-    };
-  }
-
-  if (Number.isFinite(bestFarmerPrice) && Number.isFinite(nearestPrice)) {
-    const priceDifferencePct = (bestFarmerPrice - nearestPrice) / nearestPrice;
-
-    if (priceDifferencePct >= CLOSE_PRICE_DIFFERENCE_PCT) {
-      return {
-        recommendedMarket: bestFarmerReturnMarket,
-        recommendationBasis: "farmer_return",
-      };
-    }
-  }
-
+const getRecommendedMarketSelection = ({ nearestMarket }) => {
   return {
     recommendedMarket: nearestMarket,
-    recommendationBasis: "nearest_practical",
+    recommendationBasis: "nearest_practical_persistence_policy",
   };
 };
 
@@ -338,17 +219,48 @@ const toMarketResult = (result) => ({
   predicted_price_rs_kg: result.predicted_price_rs_kg ?? null,
   price_prediction_source: result.price_prediction_source || "unavailable",
   price_model_metrics: result.price_model_metrics || null,
+  current_price_source: result.current_price_source || "manual",
+  resolved_current_price_rs_kg:
+    result.resolved_current_price_rs_kg ?? result.input_price_rs_kg ?? null,
+  resolved_current_price_at: result.resolved_current_price_at ?? null,
+  resolved_current_price_age_days:
+    result.resolved_current_price_age_days ?? null,
+  resolved_current_price_quality:
+    result.resolved_current_price_quality || "unavailable",
+  model_input_price_rs_kg: result.model_input_price_rs_kg ?? null,
+  persistence_next_price_rs_kg:
+    result.persistence_next_price_rs_kg ?? null,
+  model_run_id: result.model_run_id || "run_001",
+  model_role: result.model_role || "experimental_secondary",
+  model_estimate_experimental:
+    result.model_estimate_experimental !== false,
+  context_quality: result.context_quality || "unavailable",
+  weather_missing: Boolean(result.weather_missing),
+  inflation_missing: Boolean(result.inflation_missing),
+  action_decision:
+    result.action_decision || unavailableCanonicalDecision.action_decision,
+  action_policy:
+    result.action_policy || unavailableCanonicalDecision.action_policy,
+  action_authorized: Boolean(result.action_authorized),
+  action_decision_message:
+    result.action_decision_message ||
+    unavailableCanonicalDecision.action_decision_message,
+  action_reason_codes:
+    result.action_reason_codes ||
+    unavailableCanonicalDecision.action_reason_codes,
   market_trend: result.market_trend || "UNAVAILABLE",
   market_trend_message:
     result.market_trend_message ||
     unavailablePriceInterpretation.market_trend_message,
   market_trend_basis: result.market_trend_basis || MARKET_TREND_BASIS,
-  farmer_decision: result.farmer_decision || "UNAVAILABLE",
+  farmer_decision:
+    result.action_decision || result.farmer_decision || "UNCERTAIN",
   farmer_decision_message:
+    result.action_decision_message ||
     result.farmer_decision_message ||
     unavailablePriceInterpretation.farmer_decision_message,
   farmer_decision_basis:
-    result.farmer_decision_basis || FARMER_DECISION_BASIS,
+    result.action_policy || result.farmer_decision_basis || "persistence_primary_v1",
   market_price_change_rs: result.market_price_change_rs ?? null,
   market_price_change_pct: result.market_price_change_pct ?? null,
   farmer_price_change_rs: result.farmer_price_change_rs ?? null,
@@ -362,10 +274,7 @@ const toMarketResult = (result) => ({
     }),
   farmer_outcome_signal:
     result.farmer_outcome_signal ||
-    buildFarmerOutcomeSignal(
-      result.predicted_price_rs_kg,
-      result.input_price_rs_kg
-    ),
+    unavailablePriceInterpretation.farmer_outcome_signal,
   market_context_signal:
     result.market_context_signal ||
     buildMarketContextSignal(
@@ -379,31 +288,65 @@ const toMarketResult = (result) => ({
 
 exports.recommendBestMarket = async (req, res) => {
   try {
-    const { crop, district, price_rs_kg, horizon } = req.body;
+    const {
+      crop,
+      district,
+      price_rs_kg,
+      current_price_source,
+      horizon,
+    } = req.body;
+    const normalizedPriceSource = String(
+      current_price_source || (price_rs_kg != null ? "manual" : "")
+    )
+      .trim()
+      .toLowerCase();
 
-    if (!crop || !district || price_rs_kg == null) {
+    if (!crop || !district || !["manual", "system"].includes(normalizedPriceSource)) {
       return res.status(400).json({
         success: false,
-        message: "Missing required fields: crop, district, price_rs_kg",
+        code: "INVALID_PRICE_SOURCE",
+        message:
+          "crop, district, and current_price_source (manual or system) are required",
+      });
+    }
+
+    if (normalizedPriceSource === "manual" && price_rs_kg == null) {
+      return res.status(400).json({
+        success: false,
+        code: "MANUAL_PRICE_REQUIRED",
+        message: "price_rs_kg is required for manual current-price mode",
+      });
+    }
+
+    if (normalizedPriceSource === "system" && price_rs_kg != null) {
+      return res.status(400).json({
+        success: false,
+        code: "SYSTEM_PRICE_MUST_BE_OMITTED",
+        message: "price_rs_kg must be omitted for system current-price mode",
       });
     }
 
     const normalizedCrop = String(crop).trim().toLowerCase();
     const normalizedDistrict = String(district).trim().toLowerCase();
-    const numericPrice = Number(price_rs_kg);
-    const numericHorizon = horizon ? Number(horizon) : 1;
+    const numericPrice =
+      normalizedPriceSource === "manual" ? Number(price_rs_kg) : null;
+    const numericHorizon = horizon == null ? 1 : Number(horizon);
 
-    if (numericPrice <= 0) {
+    if (
+      normalizedPriceSource === "manual" &&
+      (!Number.isFinite(numericPrice) || numericPrice <= 0)
+    ) {
       return res.status(400).json({
         success: false,
         message: "price_rs_kg must be greater than 0",
       });
     }
 
-    if (![1, 2, 3, 4].includes(numericHorizon)) {
+    if (numericHorizon !== 1) {
       return res.status(400).json({
         success: false,
-        message: "horizon must be 1, 2, 3, or 4",
+        code: "UNSUPPORTED_HORIZON",
+        message: "Only horizon=1 (the next market period) is supported",
       });
     }
 
@@ -425,9 +368,12 @@ exports.recommendBestMarket = async (req, res) => {
           crop: normalizedCrop,
           district: normalizedMarket,
           market: normalizedMarket,
-          price_rs_kg: numericPrice,
+          current_price_source: normalizedPriceSource,
           horizon: numericHorizon,
         };
+        if (normalizedPriceSource === "manual") {
+          payload.price_rs_kg = numericPrice;
+        }
 
         const response = await axios.post(`${ML_API_URL}/predict`, payload, {
           headers: { "Content-Type": "application/json" },
@@ -462,26 +408,52 @@ exports.recommendBestMarket = async (req, res) => {
         const reliableForComparison = sourceType === "exact_market" && !fallbackUsed;
         const marketPrice = Number(meta.latest_market_price_rs_kg);
         const historyPrice = Number(meta.latest_history_price_rs_kg);
+        const resolvedCurrentPrice = toFiniteNumber(
+          data.resolved_current_price_rs_kg ??
+            meta.resolved_current_price_rs_kg
+        );
+        const currentPriceForDecision =
+          resolvedCurrentPrice ?? numericPrice;
         const referencePrice = Number.isFinite(marketPrice)
           ? marketPrice
           : Number.isFinite(historyPrice)
             ? historyPrice
-            : numericPrice;
+            : currentPriceForDecision;
         const predictedPrice = toFiniteNumber(data.predicted_price_rs_kg);
-        const priceInterpretation = buildPriceInterpretation({
-          predictedPrice,
-          currentMarketPrice: referencePrice,
-          inputPrice: numericPrice,
-        });
         const directionModelSignal = buildDirectionModelSignal({
           prediction: data.prediction,
           upProbability,
           downProbability,
         });
-        const farmerOutcomeSignal = buildFarmerOutcomeSignal(
+        const canonicalDecision = buildPriceRecommendationDecision({
+          currentPrice: currentPriceForDecision,
           predictedPrice,
-          numericPrice
+          classifierPrediction: data.prediction,
+          upProbability,
+          downProbability,
+          contextQuality: data.context_quality || meta.context_quality,
+        });
+        const farmerDifference = getPriceDifference(
+          predictedPrice,
+          currentPriceForDecision
         );
+        const priceInterpretation = {
+          ...getMarketTrend(predictedPrice, referencePrice),
+          ...canonicalDecision,
+          farmer_decision: canonicalDecision.action_decision,
+          farmer_decision_basis: canonicalDecision.action_policy,
+          farmer_decision_message:
+            canonicalDecision.action_decision_message,
+          farmer_price_change_rs: farmerDifference.changeRs,
+          farmer_price_change_pct: farmerDifference.changePct,
+        };
+        const farmerOutcomeSignal = {
+          direction: canonicalDecision.action_decision,
+          basis: canonicalDecision.action_policy,
+          change_rs_per_kg: farmerDifference.changeRs,
+          change_pct: farmerDifference.changePct,
+          message: canonicalDecision.action_decision_message,
+        };
         const marketContextSignal = buildMarketContextSignal(
           predictedPrice,
           referencePrice
@@ -497,19 +469,50 @@ exports.recommendBestMarket = async (req, res) => {
           },
           up_probability: upProbability,
           down_probability: downProbability,
-          current_price: referencePrice,
+          current_price: currentPriceForDecision,
           source_type: sourceType,
           history_basis: historyBasis,
           is_market_specific: isMarketSpecific,
           fallback_used: fallbackUsed,
           comparison_quality: isMarketSpecific ? "market_specific" : "weak_fallback",
           reliable_for_comparison: reliableForComparison,
-          current_price_rs_kg: referencePrice,
+          current_price_rs_kg: currentPriceForDecision,
           reference_price_rs_kg: referencePrice,
-          input_price_rs_kg: numericPrice,
+          input_price_rs_kg: currentPriceForDecision,
           predicted_price_rs_kg: predictedPrice,
           price_prediction_source: data.price_prediction_source || "unavailable",
           price_model_metrics: data.price_model_metrics || null,
+          current_price_source: normalizedPriceSource,
+          resolved_current_price_rs_kg: currentPriceForDecision,
+          resolved_current_price_at:
+            data.resolved_current_price_at ??
+            meta.resolved_current_price_at ??
+            null,
+          resolved_current_price_age_days:
+            data.resolved_current_price_age_days ??
+            meta.resolved_current_price_age_days ??
+            null,
+          resolved_current_price_quality:
+            data.resolved_current_price_quality ||
+            meta.resolved_current_price_quality ||
+            "unavailable",
+          model_input_price_rs_kg:
+            toFiniteNumber(data.model_input_price_rs_kg) ??
+            currentPriceForDecision,
+          persistence_next_price_rs_kg:
+            toFiniteNumber(data.persistence_next_price_rs_kg) ??
+            canonicalDecision.persistence_next_price_rs_kg,
+          model_run_id: data.model_run_id || "run_001",
+          model_role: data.model_role || "experimental_secondary",
+          model_estimate_experimental: true,
+          context_quality:
+            data.context_quality || meta.context_quality || "unavailable",
+          weather_missing: Boolean(
+            data.weather_missing ?? meta.weather_missing
+          ),
+          inflation_missing: Boolean(
+            data.inflation_missing ?? meta.inflation_missing
+          ),
           ...priceInterpretation,
           direction_model_signal: directionModelSignal,
           farmer_outcome_signal: farmerOutcomeSignal,
@@ -563,9 +566,6 @@ exports.recommendBestMarket = async (req, res) => {
     const bestPredictedMarket = bestMarketCandidates.reduce((best, current) => {
       return current.up_probability > best.up_probability ? current : best;
     });
-    const hasPredictedPrice = successfulResults.some((item) =>
-      Number.isFinite(item.predicted_price_rs_kg)
-    );
     const bestFarmerReturnMarket = getBestFarmerReturnMarket(
       successfulResults,
       bestPredictedMarket
@@ -573,9 +573,6 @@ exports.recommendBestMarket = async (req, res) => {
     const { recommendedMarket, recommendationBasis } =
       getRecommendedMarketSelection({
         nearestMarket,
-        bestFarmerReturnMarket,
-        bestPredictedMarket,
-        hasPredictedPrice,
       });
     const sortedCandidates = [...bestMarketCandidates].sort(
       (a, b) => b.up_probability - a.up_probability
@@ -604,9 +601,12 @@ exports.recommendBestMarket = async (req, res) => {
     const input = {
       crop: normalizedCrop,
       district: normalizedDistrict,
-      price_rs_kg: numericPrice,
+      current_price_source: normalizedPriceSource,
       horizon: numericHorizon,
     };
+    if (normalizedPriceSource === "manual") {
+      input.price_rs_kg = numericPrice;
+    }
     const nearestMarketResult = toMarketResult(nearestMarket);
     const bestPredictedMarketResult = toMarketResult(bestPredictedMarket);
     const bestFarmerReturnMarketResult = toMarketResult(bestFarmerReturnMarket);
@@ -615,6 +615,8 @@ exports.recommendBestMarket = async (req, res) => {
       input,
       nearestMarket: nearestMarketResult,
       bestPredictedMarket: bestPredictedMarketResult,
+      recommendedMarket: recommendedMarketResult,
+      actionDecision: recommendedMarketResult.action_decision,
       comparisons: frontendComparisons,
       comparisonStrength,
       comparisonNote,
@@ -630,6 +632,14 @@ exports.recommendBestMarket = async (req, res) => {
       best_predicted_market: bestPredictedMarketResult,
       best_farmer_return_market: bestFarmerReturnMarketResult,
       recommended_market: recommendedMarketResult,
+      action_decision: recommendedMarketResult.action_decision,
+      action_policy: recommendedMarketResult.action_policy,
+      action_authorized: recommendedMarketResult.action_authorized,
+      action_decision_message:
+        recommendedMarketResult.action_decision_message,
+      action_reason_codes: recommendedMarketResult.action_reason_codes,
+      persistence_next_price_rs_kg:
+        recommendedMarketResult.persistence_next_price_rs_kg,
       recommendation_basis: recommendationBasis,
       comparison_strength: comparisonStrength,
       comparison_note: comparisonNote,

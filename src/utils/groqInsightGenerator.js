@@ -10,7 +10,6 @@ const INSIGHT_FIELDS = [
 ];
 
 const GROQ_TIMEOUT_MS = 10000;
-const CLOSE_EARNING_DELTA = 2;
 
 const getMarketName = (market) => market?.market || "the recommended market";
 
@@ -56,20 +55,6 @@ const getEstimatedFutureEarnings = (market) =>
 const getComparisonValue = (market) =>
   getEstimatedFutureEarnings(market) ?? getEstimatedCurrentEarnings(market);
 
-const findHighestEarningMarket = (markets) =>
-  markets.reduce((highest, market) => {
-    const earnings = getComparisonValue(market);
-    if (!Number.isFinite(earnings)) {
-      return highest;
-    }
-
-    if (!highest || earnings > highest.earnings) {
-      return { market, earnings };
-    }
-
-    return highest;
-  }, null);
-
 const getTrendText = (market) => {
   const upProbability = Number(market?.up_probability);
   const downProbability = Number(market?.down_probability);
@@ -95,9 +80,10 @@ const createFallbackInsights = ({
   input,
   nearestMarket,
   bestPredictedMarket,
+  recommendedMarket,
+  actionDecision,
   comparisonStrength,
   isCloseCall,
-  comparisons = [],
 }) => {
   const crop = input?.crop || "this crop";
   const district = input?.district || "the farmer district";
@@ -105,56 +91,22 @@ const createFallbackInsights = ({
   const bestMarketName = getMarketName(bestPredictedMarket);
   const prediction = String(bestPredictedMarket?.prediction || "uncertain").toLowerCase();
   const trendText = getTrendText(bestPredictedMarket);
-  const bestComparisonValue = getComparisonValue(bestPredictedMarket);
-  const nearestComparisonValue = getComparisonValue(nearestMarket);
-  const earningsDifference =
-    Number.isFinite(bestComparisonValue) && Number.isFinite(nearestComparisonValue)
-      ? bestComparisonValue - nearestComparisonValue
-      : null;
-  const highestEarningMarket = findHighestEarningMarket([
-    nearestMarket,
-    bestPredictedMarket,
-    ...comparisons,
-  ]);
-  const bestHasHighestKnownEarnings =
-    highestEarningMarket?.market?.market === bestPredictedMarket?.market;
-  const nearestHasHighestKnownEarnings =
-    highestEarningMarket?.market?.market === nearestMarket?.market;
-  const bestHasLowerKnownEarnings =
-    Number.isFinite(bestComparisonValue) &&
-    Number.isFinite(nearestComparisonValue) &&
-    bestComparisonValue < nearestComparisonValue;
-  const earningsAreClose =
-    Number.isFinite(earningsDifference) &&
-    Math.abs(earningsDifference) <= CLOSE_EARNING_DELTA;
   const weakConfidence = comparisonStrength !== "strong" || isCloseCall;
+  const canonicalDecision =
+    actionDecision || recommendedMarket?.action_decision || "UNCERTAIN";
 
-  const recommendation = isCloseCall || earningsAreClose
-    ? `For ${crop} in ${district}, ${nearestMarketName} may be safer because it is close to ${bestMarketName}.`
-    : nearestHasHighestKnownEarnings
-      ? `For ${crop} in ${district}, ${nearestMarketName} may be the more practical option than ${bestMarketName}.`
-      : bestHasHighestKnownEarnings
-        ? `For ${crop} in ${district}, ${bestMarketName} may offer a better opportunity than ${nearestMarketName}.`
-        : bestHasLowerKnownEarnings
-          ? `For ${crop} in ${district}, ${nearestMarketName} may be more practical than ${bestMarketName} because the alternative has lower estimated earning.`
-          : `For ${crop} in ${district}, compare ${nearestMarketName} with ${bestMarketName} before deciding.`;
+  const recommendation = `For ${crop} in ${district}, ${nearestMarketName} remains the practical default while the learned-model comparison with ${bestMarketName} stays experimental.`;
 
   const predictionStrength = weakConfidence
     ? `For ${crop} in ${district}, this has weak confidence and should be treated as guidance, not a firm decision.`
     : `For ${crop} in ${district}, ${bestMarketName} shows a stronger trend signal, but it is still only guidance.`;
 
-  const suggestedAction = isCloseCall || earningsAreClose
-    ? `Check buyer offers first, but ${nearestMarketName} may reduce transport cost and selling risk compared with ${bestMarketName}.`
-    : nearestHasHighestKnownEarnings
-      ? `Compare real market conditions, but ${nearestMarketName} may reduce transport cost, selling cost, and risk.`
-      : bestHasHighestKnownEarnings
-        ? `Before choosing ${bestMarketName}, compare transport cost and selling cost with ${nearestMarketName}.`
-        : `Check buyer demand in ${nearestMarketName} and ${bestMarketName} before selling.`;
+  const suggestedAction = `Check current buyer offers, transport cost, storage, and spoilage risk before choosing when or where to sell.`;
 
   return {
     recommendation,
     prediction_summary: `${bestMarketName} shows ${trendText}, while ${nearestMarketName} remains the nearest option for ${crop} in ${district}.`,
-    price_movement: `The price direction for ${bestMarketName} is predicted as ${prediction}, but future prices may change with market conditions.`,
+    price_movement: `The experimental price direction for ${bestMarketName} is predicted as ${prediction}, but the canonical selling guidance remains ${canonicalDecision.toLowerCase()}.`,
     prediction_strength: predictionStrength,
     why_this_matters: `${nearestMarketName} affects practical selling cost for farmers in ${district}, while ${bestMarketName} may show a different earning opportunity for ${crop}.`,
     suggested_action: suggestedAction,
@@ -210,6 +162,8 @@ const buildPrompt = ({
   input,
   nearestMarket,
   bestPredictedMarket,
+  recommendedMarket,
+  actionDecision,
   comparisons,
   comparisonStrength,
   comparisonNote,
@@ -230,6 +184,9 @@ const buildPrompt = ({
     crop: input?.crop,
     farmer_district: input?.district,
     prediction_horizon: input?.horizon,
+    canonical_action_decision:
+      actionDecision || recommendedMarket?.action_decision || "UNCERTAIN",
+    learned_model_action_authorized: false,
     nearest_market: {
       ...nearestMarket,
       estimated_current_earnings: nearestCurrentEarnings,
@@ -359,6 +316,12 @@ Each field should be one to two short sentences only.
 No markdown.
 No bullet points outside JSON.
 No extra explanation.
+
+20. The canonical action decision is authoritative.
+- Never turn UNCERTAIN into WAIT or SELL_NOW.
+- The learned model is experimental and must not be presented as action-authorized.
+- Do not tell the farmer to wait or sell now when the canonical action is UNCERTAIN.
+- Keep the nearest mapped market as the practical default; do not redirect the farmer using the experimental model.
 
 OUTPUT FORMAT:
 

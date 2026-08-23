@@ -7,9 +7,13 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
-from ml.inference.feature_builder import build_runtime_features, load_history
+from ml.inference.feature_builder import (
+    build_runtime_features,
+    load_history,
+    resolve_latest_exact_market_price,
+)
 from ml.inference.schemas import PredictRequest
 
 app = FastAPI()
@@ -165,6 +169,37 @@ def _predict_price(feature_row: dict) -> dict:
     }
 
 
+def _resolve_current_price(payload: dict) -> dict:
+    if payload["current_price_source"] == "manual":
+        return {
+            "price_rs_kg": float(payload["price_rs_kg"]),
+            "observed_at": None,
+            "age_days": 0,
+            "source": "manual_input",
+            "quality": "manual_input",
+        }
+
+    resolved = resolve_latest_exact_market_price(
+        history_df,
+        crop=payload["crop"],
+        district=payload["district"],
+        market=payload["market"],
+    )
+    if resolved is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "CURRENT_PRICE_UNAVAILABLE",
+                "message": "No exact crop, district, and market price is available for system-price mode.",
+            },
+        )
+
+    return {
+        **resolved,
+        "quality": "latest_recorded",
+    }
+
+
 @app.get("/")
 def home():
     return {"message": "ML Crop Prediction API Running"}
@@ -179,7 +214,21 @@ def predict(request: PredictRequest):
     payload["market"] = payload["market"].strip().lower()
 
     try:
+        resolved_current_price = _resolve_current_price(payload)
+        payload["price_rs_kg"] = resolved_current_price["price_rs_kg"]
         feature_row, meta = build_runtime_features(payload, history_df)
+        meta.update({
+            "current_price_source": payload["current_price_source"],
+            "resolved_current_price_rs_kg": resolved_current_price["price_rs_kg"],
+            "resolved_current_price_at": resolved_current_price["observed_at"],
+            "resolved_current_price_age_days": resolved_current_price["age_days"],
+            "resolved_current_price_quality": resolved_current_price["quality"],
+            "resolved_current_price_source": resolved_current_price["source"],
+            "model_input_price_rs_kg": payload["price_rs_kg"],
+            "persistence_next_price_rs_kg": resolved_current_price["price_rs_kg"],
+            "model_run_id": "run_001",
+            "model_role": "experimental_secondary",
+        })
         df = pd.DataFrame([feature_row])
 
         prediction_encoded = model.predict(df)[0]
@@ -197,12 +246,27 @@ def predict(request: PredictRequest):
             "prediction": label_map[int(prediction_encoded)],
             "probabilities": probability_map,
             **price_prediction,
+            "current_price_source": payload["current_price_source"],
+            "resolved_current_price_rs_kg": resolved_current_price["price_rs_kg"],
+            "resolved_current_price_at": resolved_current_price["observed_at"],
+            "resolved_current_price_age_days": resolved_current_price["age_days"],
+            "resolved_current_price_quality": resolved_current_price["quality"],
+            "model_input_price_rs_kg": payload["price_rs_kg"],
+            "persistence_next_price_rs_kg": resolved_current_price["price_rs_kg"],
+            "model_run_id": "run_001",
+            "model_role": "experimental_secondary",
+            "model_estimate_experimental": True,
+            "context_quality": meta.get("context_quality"),
+            "weather_missing": meta.get("weather_missing"),
+            "inflation_missing": meta.get("inflation_missing"),
             "source_type": meta.get("source_type"),
             "history_basis": meta.get("history_basis"),
             "is_market_specific": meta.get("is_market_specific"),
             "fallback_used": meta.get("fallback_used"),
             "meta": meta,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         return {
             "error": str(e),

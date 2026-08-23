@@ -1,0 +1,11 @@
+crop,district,market,input_price,horizon,predicted_direction,down_probability,up_probability,predicted_price,source_type,fallback_used,history_rows_available
+beans,kandy,kandy,424.0,1,DOWN,0.598638769267516,0.401361230732484,415.85,exact_market,False,294
+beans,dambulla,dambulla,394.0,1,DOWN,0.5647105553200286,0.4352894446799714,404.56,exact_market,False,294
+cabbage,nuwaraeliya,nuwaraeliya,144.0,1,DOWN,0.5243802944748202,0.4756197055251794,145.7,exact_market,False,294
+carrots,colombo,colombo,141.0,1,DOWN,0.5566118466064197,0.44338815339358034,136.29,exact_market,False,284
+chili,kandy,kandy,776.0,1,DOWN,0.7951279541192965,0.2048720458807034,663.77,exact_market,False,294
+eggplants,meegoda,meegoda,364.0,1,DOWN,0.7385719178963079,0.26142808210369184,317.87,exact_market,False,284
+pumpkin,dambulla,dambulla,180.0,1,DOWN,0.5580038729726724,0.44199612702732727,179.54,exact_market,False,294
+snake gourd,nuwaraeliya,nuwaraeliya,315.0,1,DOWN,0.7156929359609492,0.28430706403905065,287.33,exact_market,False,294
+tomatoes,colombo,colombo,368.0,1,DOWN,0.739731901307778,0.26026809869222134,373.59,exact_market,False,284
+tomatoes,meegoda,meegoda,382.0,1,DOWN,0.6310628100491961,0.36893718995080366,390.18,exact_market,False,284
