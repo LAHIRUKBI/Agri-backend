@@ -333,3 +333,33 @@ exports.advanceCropStep = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+exports.deleteUser = async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    if (!userId) {
+      return res.status(400).json({ message: 'User ID is required' });
+    }
+
+    // Find and delete the user
+    const deletedUser = await User.findByIdAndDelete(userId);
+
+    if (!deletedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'User deleted successfully' 
+    });
+  } catch (error) {
+    console.error('Error in deleteUser:', error);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+    
+    res.status(500).json({ message: error.message });
+  }
+};
