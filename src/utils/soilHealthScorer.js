@@ -35,6 +35,65 @@ const DISTRICT_ZONE_MAP = {
   Vavuniya: 'Northern Dry Zone'
 };
 
+const COASTAL_DISTRICTS = new Set([
+  'Ampara',
+  'Batticaloa',
+  'Colombo',
+  'Galle',
+  'Gampaha',
+  'Hambantota',
+  'Jaffna',
+  'Kalutara',
+  'Mannar',
+  'Matara',
+  'Mullaitivu',
+  'Puttalam',
+  'Trincomalee'
+]);
+
+const SOIL_TYPE_PROFILES = [
+  {
+    name: 'Reddish Brown Earth',
+    zones: ['Dry Zone', 'Intermediate Zone', 'Northern Dry Zone'],
+    brightness: 124,
+    texture: 46,
+    redDominance: 24,
+    coastal: false,
+    highland: false,
+    lateritic: false
+  },
+  {
+    name: 'Red Yellow Podzolic',
+    zones: ['Wet Zone'],
+    brightness: 116,
+    texture: 50,
+    redDominance: 12,
+    coastal: false,
+    highland: false,
+    lateritic: false
+  },
+  {
+    name: 'Regosol',
+    zones: ['Dry Zone', 'Northern Dry Zone'],
+    brightness: 166,
+    texture: 24,
+    redDominance: 3,
+    coastal: true,
+    highland: false,
+    lateritic: false
+  },
+  {
+    name: 'Alluvial',
+    zones: ['Dry Zone', 'Wet Zone', 'Intermediate Zone', 'Northern Dry Zone'],
+    brightness: 128,
+    texture: 40,
+    redDominance: 7,
+    coastal: false,
+    highland: false,
+    lateritic: false
+  }
+];
+
 const LANGUAGE_BUNDLES = {
   English: {
     classifications: {
@@ -58,10 +117,9 @@ const LANGUAGE_BUNDLES = {
     },
     soilTypes: {
       'Reddish Brown Earth': 'Reddish Brown Earth',
-      'Low Humic Gley': 'Low Humic Gley',
       'Red Yellow Podzolic': 'Red Yellow Podzolic',
-      'Alluvial / Sandy Mix': 'Alluvial / Sandy Mix',
-      'Mixed Agricultural Soil': 'Mixed Agricultural Soil'
+      Regosol: 'Regosol',
+      Alluvial: 'Alluvial'
     },
     recommendations: {
       phLow: 'Soil appears acidic. Consider liming before the next planting cycle.',
@@ -100,10 +158,9 @@ const LANGUAGE_BUNDLES = {
     },
     soilTypes: {
       'Reddish Brown Earth': 'රතු-දුඹුරු පස',
-      'Low Humic Gley': 'අඩු හියුමස් ග්ලේ පස',
       'Red Yellow Podzolic': 'රතු-කහ පොඩ්සොලික් පස',
-      'Alluvial / Sandy Mix': 'ගංගා තැන්පතු / වැලි මිශ්‍ර පස',
-      'Mixed Agricultural Soil': 'මිශ්‍ර කෘෂිකාර්මික පස'
+      Regosol: 'රෙගොසෝල් පස',
+      Alluvial: 'ගංගා තැන්පතු පස'
     },
     recommendations: {
       phLow: 'පස අම්ලීය බව පේනවා. ඊළඟ වගා වාරයට කලින් ලයිම් යෙදීම සලකා බලන්න.',
@@ -158,6 +215,36 @@ function classifyLevel(value, { min, max }) {
   return 'Balanced';
 }
 
+function isCoastalDistrict(district) {
+  return COASTAL_DISTRICTS.has(district);
+}
+
+function getClosestSoilType({ zone, brightness, texture, redDominance, coastal }) {
+  let bestMatch = 'Alluvial';
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const profile of SOIL_TYPE_PROFILES) {
+    let score =
+      Math.abs(brightness - profile.brightness) * 0.9 +
+      Math.abs(texture - profile.texture) * 1.1 +
+      Math.abs(redDominance - profile.redDominance) * 1.3;
+
+    if (!profile.zones.includes(zone)) {
+      score += 18;
+    }
+    if (profile.coastal !== coastal) {
+      score += 8;
+    }
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestMatch = profile.name;
+    }
+  }
+
+  return bestMatch;
+}
+
 function inferSoilTypeFromImage(imageMetrics = {}, district) {
   const redness = Number(imageMetrics.redMean || 0);
   const green = Number(imageMetrics.greenMean || 0);
@@ -166,19 +253,38 @@ function inferSoilTypeFromImage(imageMetrics = {}, district) {
   const brightness = Number(imageMetrics.brightness || 0);
   const zone = DISTRICT_ZONE_MAP[district] || 'Mixed Zone';
 
-  if (redness > green + 18 && redness > blue + 25) {
+  const redDominance = redness - Math.max(green, blue);
+  const yellowBias = redDominance > 8 && Math.abs(redness - green) < 30 && green > blue + 5;
+  const darkSoil = brightness < 92;
+  const veryDarkSoil = brightness < 72;
+  const brightSoil = brightness > 148;
+  const veryBrightSoil = brightness > 168;
+  const lowTexture = texture < 34;
+  const mediumTexture = texture >= 34 && texture < 55;
+  const highTexture = texture >= 55;
+  const coastal = isCoastalDistrict(district);
+
+  if ((zone === 'Dry Zone' || zone === 'Northern Dry Zone') && brightSoil && lowTexture) {
+    return 'Regosol';
+  }
+
+  if ((zone === 'Dry Zone' || zone === 'Northern Dry Zone') && brightness >= 108 && brightness <= 148 && mediumTexture) {
+    return 'Alluvial';
+  }
+  if ((zone === 'Dry Zone' || zone === 'Intermediate Zone') && redDominance > 18 && redness > blue + 25) {
     return 'Reddish Brown Earth';
   }
-  if (brightness < 95 && texture > 55) {
-    return 'Low Humic Gley';
-  }
-  if (zone === 'Wet Zone' && brightness < 120) {
+
+  if (zone === 'Wet Zone' && (yellowBias || (darkSoil && highTexture) || brightness < 132)) {
     return 'Red Yellow Podzolic';
   }
-  if (zone === 'Dry Zone' && brightness > 145) {
-    return 'Alluvial / Sandy Mix';
-  }
-  return 'Mixed Agricultural Soil';
+  return getClosestSoilType({
+    zone,
+    brightness,
+    texture,
+    redDominance,
+    coastal
+  });
 }
 
 function estimateImageDrivenReadings(imageMetrics = {}, metadata = {}) {
@@ -279,7 +385,7 @@ function computeSoilHealthAssessment(readings, metadata = {}, mode = 'image_only
   const levels = Object.fromEntries(
     Object.entries(levelsRaw).map(([key, value]) => [key, bundle.levels[value] || value])
   );
-  const soilTypeKey = readings.soilType || 'Mixed Agricultural Soil';
+  const soilTypeKey = readings.soilType || 'Alluvial';
   const agroZoneKey = DISTRICT_ZONE_MAP[metadata.district] || 'Mixed Zone';
 
   return {
