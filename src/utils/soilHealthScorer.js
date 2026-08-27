@@ -251,18 +251,23 @@ function inferSoilTypeFromImage(imageMetrics = {}, district) {
   const blue = Number(imageMetrics.blueMean || 0);
   const texture = Number(imageMetrics.textureScore || 0);
   const brightness = Number(imageMetrics.brightness || 0);
+  const earthyRatio = Number(imageMetrics.earthyRatio || 0);
   const zone = DISTRICT_ZONE_MAP[district] || 'Mixed Zone';
 
   const redDominance = redness - Math.max(green, blue);
+  const channelSpread = Math.max(redness, green, blue) - Math.min(redness, green, blue);
   const yellowBias = redDominance > 8 && Math.abs(redness - green) < 30 && green > blue + 5;
   const darkSoil = brightness < 92;
-  const veryDarkSoil = brightness < 72;
   const brightSoil = brightness > 148;
-  const veryBrightSoil = brightness > 168;
   const lowTexture = texture < 34;
   const mediumTexture = texture >= 34 && texture < 55;
   const highTexture = texture >= 55;
   const coastal = isCoastalDistrict(district);
+  const muddySurface = brightness >= 135 && texture <= 32 && channelSpread <= 35 && earthyRatio >= 0.2;
+
+  if (muddySurface) {
+    return 'Unsupported';
+  }
 
   if ((zone === 'Dry Zone' || zone === 'Northern Dry Zone') && brightSoil && lowTexture) {
     return 'Regosol';
@@ -293,8 +298,14 @@ function estimateImageDrivenReadings(imageMetrics = {}, metadata = {}) {
   const red = Number(imageMetrics.redMean || 120);
   const green = Number(imageMetrics.greenMean || 105);
   const blue = Number(imageMetrics.blueMean || 90);
+  const earthyRatio = Number(imageMetrics.earthyRatio || 0);
+  const channelSpread = Math.max(red, green, blue) - Math.min(red, green, blue);
+  const muddySurface = brightness >= 135 && texture <= 32 && channelSpread <= 35 && earthyRatio >= 0.2;
 
-  const moisture = clamp(round(12 + ((140 - brightness) / 2.4) + texture * 0.25), 5, 70);
+  const moistureBase = 12 + ((140 - brightness) / 2.4) + texture * 0.25;
+  const moisture = muddySurface
+    ? clamp(round(Math.max(32, moistureBase + 16)), 5, 70)
+    : clamp(round(moistureBase), 5, 70);
   const organicMatter = clamp(round(1.5 + ((120 - brightness) / 70) + texture / 55), 0.8, 7.5);
   const ph = clamp(round(5.4 + ((red - blue) / 120) + ((green - 100) / 250)), 4.5, 8.0);
   const nitrogen = clamp(round(55 + moisture * 1.2 + organicMatter * 12), 25, 220);
