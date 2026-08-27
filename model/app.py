@@ -1,11 +1,11 @@
 # backend/model/app.py
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Dict, List
+from typing import Dict, List, Optional
 import pandas as pd
 import pickle
 import os
-import json
+import sys
 import numpy as np
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
@@ -14,6 +14,12 @@ from sklearn.preprocessing import OneHotEncoder, MultiLabelBinarizer
 from sklearn.ensemble import RandomForestClassifier
 
 from nutrient_manager import get_or_create_nutrients   # only for crop NPK requirements
+
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PARENT_DIR not in sys.path:
+    sys.path.append(PARENT_DIR)
+
+from algorithms.soil_image_pipeline import SoilImagePipeline
 
 load_dotenv()
 app = FastAPI()
@@ -31,6 +37,7 @@ MODEL_DIR = os.path.join(CURRENT_DIR, "saved_models")
 DATA_DIR = os.path.join(CURRENT_DIR, "data")
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
+soil_image_pipeline = SoilImagePipeline(MODEL_DIR, DATA_DIR)
 
 # ---------- Global ML models ----------
 npk_model = None
@@ -39,9 +46,6 @@ agro_df = None               # loaded once at startup
 crop_rec_model = None
 crop_rec_encoder = None
 crop_rec_mlb = None
-soil_image_model = None
-soil_image_feature_columns = None
-soil_image_target_columns = None
 
 # ---------- Load NPK Predictor Model ----------
 def load_npk_predictor():
@@ -101,24 +105,6 @@ def load_crop_rec_models():
         print("✅ Crop Recommendation ML Models loaded into memory.")
         return True
     except Exception as e:
-        return False
-
-def load_soil_image_model():
-    global soil_image_model, soil_image_feature_columns, soil_image_target_columns
-    model_path = os.path.join(MODEL_DIR, "soil_image_assessor.pkl")
-    if not os.path.exists(model_path):
-        print("⚠️ Soil image model not found. Quick image check will use backend fallback.")
-        return False
-    try:
-        with open(model_path, "rb") as f:
-            artifact = pickle.load(f)
-        soil_image_model = artifact["model"]
-        soil_image_feature_columns = artifact["feature_columns"]
-        soil_image_target_columns = artifact["target_columns"]
-        print("✅ Soil image assessor model loaded.")
-        return True
-    except Exception as e:
-        print(f"⚠️ Failed to load soil image model: {e}")
         return False
 
 def train_crop_recommendation_model():
@@ -331,55 +317,7 @@ class SoilImageAssessmentRequest(BaseModel):
     cropType: str = ""
     language: str = "English"
     imageMetrics: Dict[str, float]
-
-
-def classify_soil_image_metrics(image_metrics: Dict[str, float]):
-    brightness = float(image_metrics.get("brightness", 0.0))
-    texture_score = float(image_metrics.get("textureScore", 0.0))
-    red_mean = float(image_metrics.get("redMean", 0.0))
-    green_mean = float(image_metrics.get("greenMean", 0.0))
-    blue_mean = float(image_metrics.get("blueMean", 0.0))
-    earthy_ratio = float(image_metrics.get("earthyRatio", 0.0))
-    blue_ratio = float(image_metrics.get("blueRatio", 0.0))
-    green_ratio = float(image_metrics.get("greenRatio", 0.0))
-    edge_density = float(image_metrics.get("edgeDensity", 0.0))
-
-    channel_spread = max(red_mean, green_mean, blue_mean) - min(red_mean, green_mean, blue_mean)
-
-    checks = {
-        "earth_dominance": earthy_ratio >= 0.34,
-        "low_blue_scene": blue_ratio <= 0.22,
-        "low_green_scene": green_ratio <= 0.28,
-        "close_texture": texture_score >= 24 and edge_density >= 0.12,
-        "balanced_light": 35 <= brightness <= 205,
-        "balanced_channels": channel_spread <= 105 and red_mean >= blue_mean - 5
-    }
-
-    passed_checks = sum(1 for passed in checks.values() if passed)
-    confidence = round(passed_checks / len(checks), 2)
-    is_soil_image = passed_checks >= 5 and checks["earth_dominance"] and checks["close_texture"]
-
-    failed_reasons = []
-    if not checks["earth_dominance"]:
-        failed_reasons.append("Earth-tone pixel dominance is too low.")
-    if not checks["close_texture"]:
-        failed_reasons.append("Image does not look like a close-up soil texture.")
-    if not checks["low_blue_scene"]:
-        failed_reasons.append("Too much sky or water-like blue content detected.")
-    if not checks["low_green_scene"]:
-        failed_reasons.append("Too much vegetation-like green content detected.")
-    if not checks["balanced_light"]:
-        failed_reasons.append("Lighting range is not suitable for a soil close-up.")
-    if not checks["balanced_channels"]:
-        failed_reasons.append("Color balance does not match typical soil imagery.")
-
-    return {
-        "is_soil_image": is_soil_image,
-        "confidence": confidence,
-        "label": "soil_close_up" if is_soil_image else "non_soil_or_wide_scene",
-        "failed_reasons": failed_reasons,
-        "checks": checks
-    }
+    imageBase64: Optional[str] = ""
 
 # ---------- Start-up Loaders ----------
 load_npk_predictor()
@@ -387,7 +325,8 @@ load_agrochemical_data()
 if not load_crop_rec_models():
     if train_crop_recommendation_model():
         load_crop_rec_models()
-load_soil_image_model()
+soil_image_pipeline.load_soil_type_nutrient_model()
+soil_image_pipeline.load_soil_type_nutrient_dataset()
 
 # ---------- Endpoints ----------
 @app.post("/predict_npk")
@@ -403,50 +342,70 @@ async def predict_npk(req: RotationRequest):
 
 @app.post("/soil_image_assess")
 async def soil_image_assess(req: SoilImageAssessmentRequest):
-    global soil_image_model, soil_image_feature_columns, soil_image_target_columns
+    image_classification = soil_image_pipeline.classify_soil_image_metrics(req.imageMetrics)
+    soil_type_prediction = soil_image_pipeline.classify_soil_type_via_roboflow(req.imageBase64 or "")
+    if soil_type_prediction:
+        print("DEBUG soil_image_assess roboflow =", soil_type_prediction)
+    if soil_type_prediction and soil_type_prediction.get("soilType") == "Non_Soil":
+        non_soil_confidence = float(soil_type_prediction.get("confidence", 0.0) or 0.0)
+        if image_classification["is_soil_image"] and non_soil_confidence < 0.82:
+            soil_type_prediction = soil_image_pipeline.infer_soil_type_from_image_metrics(req.imageMetrics, req.district)
+            print("DEBUG soil_image_assess fallback_after_non_soil =", soil_type_prediction)
+        else:
+            return {
+                "success": False,
+                "message": "This is not soil. Please upload a clear close-up soil photo.",
+                "isSoilImage": False,
+                "imageClassification": image_classification,
+                "soilTypePrediction": soil_type_prediction,
+            }
 
-    image_classification = classify_soil_image_metrics(req.imageMetrics)
-    if not image_classification["is_soil_image"]:
+    if soil_type_prediction is None:
+        if not image_classification["is_soil_image"]:
+            print("DEBUG soil_image_assess rejected_by_image_metrics =", image_classification)
+            return {
+                "success": False,
+                "message": "This is not soil. Please upload a clear close-up soil photo.",
+                "isSoilImage": False,
+                "imageClassification": image_classification
+            }
+        soil_type_prediction = soil_image_pipeline.infer_soil_type_from_image_metrics(req.imageMetrics, req.district)
+        print("DEBUG soil_image_assess local_fallback =", soil_type_prediction)
+
+    if not soil_type_prediction.get("supported", False):
+        print("DEBUG soil_image_assess unsupported =", soil_type_prediction)
         return {
             "success": False,
-            "message": "This image does not appear to be a valid close-up soil photo.",
-            "isSoilImage": False,
-            "imageClassification": image_classification
-        }
-
-    if soil_image_model is None or soil_image_feature_columns is None or soil_image_target_columns is None:
-        return {
-            "success": False,
-            "message": "Soil image model is not trained yet.",
+            "message": "Undetected soil type. This soil photo does not match the 4 supported soil groups in the current model.",
             "isSoilImage": True,
-            "imageClassification": image_classification
+            "imageClassification": image_classification,
+            "soilTypePrediction": soil_type_prediction,
         }
 
-    raw_row = {
-        "brightness": float(req.imageMetrics.get("brightness", 0.0)),
-        "textureScore": float(req.imageMetrics.get("textureScore", 0.0)),
-        "redMean": float(req.imageMetrics.get("redMean", 0.0)),
-        "greenMean": float(req.imageMetrics.get("greenMean", 0.0)),
-        "blueMean": float(req.imageMetrics.get("blueMean", 0.0)),
-        "district": req.district,
-        "season": req.season or "Maha"
-    }
-
-    feature_df = pd.DataFrame([raw_row])
-    feature_df = pd.get_dummies(feature_df, columns=["district", "season"])
-    feature_df = feature_df.reindex(columns=soil_image_feature_columns, fill_value=0)
-
-    prediction = soil_image_model.predict(feature_df)[0]
-    predicted = {
-        target: round(float(value), 2)
-        for target, value in zip(soil_image_target_columns, prediction)
-    }
+    predicted = soil_image_pipeline.predict_soil_properties_from_profile(
+        soil_type_prediction["soilType"],
+        req.district,
+        req.season or "Maha",
+        req.cropType or "",
+    )
+    if predicted is not None:
+        predicted = soil_image_pipeline.refine_predicted_readings_with_image(predicted, req.imageMetrics)
+        predicted["soilType"] = soil_type_prediction["soilType"]
+        predicted["confidence"] = round(max(float(soil_type_prediction.get("confidence", 0.78)), 0.62), 2)
+        return {
+            "success": True,
+            "predictedReadings": predicted,
+            "isSoilImage": True,
+            "imageClassification": image_classification,
+            "soilTypePrediction": soil_type_prediction,
+        }
 
     return {
-        "success": True,
-        "predictedReadings": predicted,
+        "success": False,
+        "message": "No nutrient profile is available for the detected soil type and selected inputs.",
         "isSoilImage": True,
-        "imageClassification": image_classification
+        "imageClassification": image_classification,
+        "soilTypePrediction": soil_type_prediction,
     }
 
 @app.get("/get_requirements/{crop_name}")

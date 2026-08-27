@@ -2,7 +2,6 @@ const SoilHealthRecord = require('../models/SoilHealthRecord');
 const SoilHealthRequest = require('../models/SoilHealthRequest');
 const User = require('../models/User');
 const {
-  createImageOnlyAssessment,
   createAssessmentFromReadings,
   createFusionAssessment
 } = require('../utils/soilHealthScorer');
@@ -18,6 +17,15 @@ function mapImageAssessment(result) {
     confidence: result.confidence,
     soilType: result.soilType
   };
+}
+
+function isUnsupportedSoilAssessment(result) {
+  if (!result) return false;
+
+  return (
+    String(result.soilTypeKey || '').toLowerCase() === 'unsupported' ||
+    String(result.soilType || '').toLowerCase() === 'unsupported'
+  );
 }
 
 function buildProfileAddress(user) {
@@ -76,17 +84,19 @@ async function generateQuickImageAssessment(imageMetrics, metadata) {
         season: metadata.season,
         cropType: metadata.cropType,
         language: metadata.language,
-        imageMetrics
+        imageMetrics,
+        imageBase64: metadata.imageBase64
       })
     });
 
     if (!response.ok) {
-      throw new Error('Python soil-image model endpoint is unavailable.');
+      const errorBody = await response.text();
+      throw new Error(errorBody || 'Python soil-image model endpoint is unavailable.');
     }
 
     const payload = await response.json();
     if (!payload.success || !payload.predictedReadings) {
-      if (payload.isSoilImage === False || payload.isSoilImage === false) {
+      if (payload.isSoilImage === false) {
         throw new Error(payload.message || 'This image is not a valid close-up soil photo.');
       }
       throw new Error(payload.message || 'Python soil-image model did not return predictions.');
@@ -94,19 +104,16 @@ async function generateQuickImageAssessment(imageMetrics, metadata) {
 
     return createAssessmentFromReadings(payload.predictedReadings, { ...metadata, imageMetrics }, 'image_only');
   } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message.includes('valid close-up soil photo') || error.message.includes('does not appear to be a valid'))
-    ) {
+    if (error instanceof Error) {
       throw error;
     }
-    return createImageOnlyAssessment(imageMetrics, metadata);
+    throw new Error('Unable to verify the uploaded soil image.');
   }
 }
 
 exports.runQuickImageAssessment = async (req, res) => {
   try {
-    const { district, location, cropType, season, landSize, imageMetrics, language } = req.body;
+    const { district, location, cropType, season, landSize, imageMetrics, language, imageBase64 } = req.body;
 
     if (!district || !imageMetrics) {
       return res.status(400).json({ success: false, message: 'District and image metrics are required.' });
@@ -114,9 +121,16 @@ exports.runQuickImageAssessment = async (req, res) => {
 
     let result;
     try {
-      result = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language });
+      result = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language, imageBase64 });
     } catch (error) {
       return res.status(400).json({ success: false, message: error.message });
+    }
+
+    if (isUnsupportedSoilAssessment(result)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Undetected soil type. This soil photo does not match the 4 supported soil groups in the current model.'
+      });
     }
 
     const record = await SoilHealthRecord.create({
@@ -140,7 +154,7 @@ exports.runQuickImageAssessment = async (req, res) => {
 
 exports.createSensorRequest = async (req, res) => {
   try {
-    const { district, location, visitAddress, cropType, season, landSize, preferredDate, farmerNotes, imageMetrics, language } = req.body;
+    const { district, location, visitAddress, cropType, season, landSize, preferredDate, farmerNotes, imageMetrics, language, imageBase64 } = req.body;
 
     if (!district || !imageMetrics) {
       return res.status(400).json({ success: false, message: 'District and image metrics are required.' });
@@ -156,9 +170,16 @@ exports.createSensorRequest = async (req, res) => {
 
     let imageAssessment;
     try {
-      imageAssessment = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language });
+      imageAssessment = await generateQuickImageAssessment(imageMetrics, { district, cropType, season, language, imageBase64 });
     } catch (error) {
       return res.status(400).json({ success: false, message: error.message });
+    }
+
+    if (isUnsupportedSoilAssessment(imageAssessment)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Undetected soil type. This soil photo does not match the 4 supported soil groups in the current model.'
+      });
     }
 
     const request = await SoilHealthRequest.create({
