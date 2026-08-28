@@ -10,6 +10,8 @@ const rotationRoutes = require('./src/routes/rotationRoutes');
 const guidanceRoutes = require('./src/routes/guidanceRoutes');
 const nutrientRoutes = require('./src/routes/nutrientRoutes');
 const soilHealthRoutes = require('./src/routes/soilHealthRoutes');
+const marketRecommendationRoutes = require('./src/routes/marketRecommendationRoutes');
+const notificationRoutes = require('./src/routes/notificationRoutes');
 
 const app = express();
 
@@ -32,6 +34,8 @@ app.use('/api/rotation', rotationRoutes);
 app.use('/api/guidance', guidanceRoutes);
 app.use('/api/nutrients', nutrientRoutes);
 app.use('/api/soil-health', soilHealthRoutes);
+app.use('/api', marketRecommendationRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 
 // 404 handler - This must come AFTER all other routes
