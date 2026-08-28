@@ -74,10 +74,13 @@ const getTrendText = (market) => {
   return "a balanced trend";
 };
 
-const hasExactNumber = (value) => /(?:rs\.?|lkr|\d)/i.test(value);
+const hasExactNumber = (value) => /(?:\b(?:rs|lkr)\b|\d)/i.test(value);
 
-const UNCERTAIN_ACTION_LANGUAGE_PATTERNS = [
+const SELL_NOW_ACTION_LANGUAGE_PATTERNS = [
   /\bsell\b[^.!?\n]{0,40}\b(?:now|immediately|before)\b/i,
+];
+
+const WAIT_ACTION_LANGUAGE_PATTERNS = [
   /\bwait\b/i,
   /\bhold\b/i,
   /\b(?:delay|postpone)\s+(?:the\s+)?(?:sale|selling)\b/i,
@@ -91,13 +94,16 @@ const getCanonicalActionDecision = (recommendationData) =>
   ).toUpperCase();
 
 const violatesActionLanguagePolicy = (value, canonicalActionDecision) => {
-  if (canonicalActionDecision !== "UNCERTAIN") {
-    return false;
-  }
-
-  return UNCERTAIN_ACTION_LANGUAGE_PATTERNS.some((pattern) =>
+  const containsSellNow = SELL_NOW_ACTION_LANGUAGE_PATTERNS.some((pattern) =>
     pattern.test(value)
   );
+  const containsWait = WAIT_ACTION_LANGUAGE_PATTERNS.some((pattern) =>
+    pattern.test(value)
+  );
+
+  if (canonicalActionDecision === "WAIT") return containsSellNow;
+  if (canonicalActionDecision === "SELL_NOW") return containsWait;
+  return containsSellNow || containsWait;
 };
 
 const getFallbackWeatherMessages = (weatherContext) => {
@@ -126,7 +132,7 @@ const getFallbackWeatherMessages = (weatherContext) => {
 
 const createFallbackInsights = ({
   input,
-  nearestMarket,
+  primaryMappedMarket,
   bestPredictedMarket,
   recommendedMarket,
   actionDecision,
@@ -135,32 +141,36 @@ const createFallbackInsights = ({
   weatherContext,
 }) => {
   const crop = input?.crop || "this crop";
-  const district = input?.district || "the farmer district";
-  const nearestMarketName = getMarketName(nearestMarket);
+  const farmerDistrict =
+    input?.farmer_district || input?.district || "the farmer district";
+  const primaryMappedMarketName = getMarketName(primaryMappedMarket);
   const bestMarketName = getMarketName(bestPredictedMarket);
   const prediction = String(bestPredictedMarket?.prediction || "uncertain").toLowerCase();
   const trendText = getTrendText(bestPredictedMarket);
   const weakConfidence = comparisonStrength !== "strong" || isCloseCall;
   const canonicalDecision =
     actionDecision || recommendedMarket?.action_decision || "UNCERTAIN";
+  const canonicalDecisionText = String(canonicalDecision)
+    .replace(/_/g, " ")
+    .toLowerCase();
 
-  const recommendation = `For ${crop} in ${district}, ${nearestMarketName} remains the practical default while the learned-model comparison with ${bestMarketName} stays experimental.`;
+  const recommendation = `For ${crop} in ${farmerDistrict}, ${primaryMappedMarketName} remains the policy-preferred mapped option while the learned-model comparison with ${bestMarketName} stays experimental.`;
 
   const predictionStrength = weakConfidence
-    ? `For ${crop} in ${district}, this has weak confidence and should be treated as guidance, not a firm decision.`
-    : `For ${crop} in ${district}, ${bestMarketName} shows a stronger trend signal, but it is still only guidance.`;
+    ? `For ${crop} in ${farmerDistrict}, this has weak confidence and should be treated as guidance, not a firm decision.`
+    : `For ${crop} in ${farmerDistrict}, ${bestMarketName} shows a stronger trend signal, but it is still only guidance.`;
 
-  const suggestedAction = `Check current buyer offers, transport cost, storage, and spoilage risk before choosing when or where to sell.`;
+  const suggestedAction = `Check current buyer offers, actual logistics, storage, and spoilage conditions before choosing when or where to sell.`;
   const weatherMessages = getFallbackWeatherMessages(weatherContext);
 
   return {
     recommendation,
-    prediction_summary: `${bestMarketName} shows ${trendText}, while ${nearestMarketName} remains the nearest option for ${crop} in ${district}.`,
-    price_movement: `The experimental price direction for ${bestMarketName} is predicted as ${prediction}, but the canonical selling guidance remains ${canonicalDecision.toLowerCase()}.`,
+    prediction_summary: `${bestMarketName} shows ${trendText}, while ${primaryMappedMarketName} remains the policy-preferred mapped option for ${crop} in ${farmerDistrict}.`,
+    price_movement: `The experimental price direction for ${bestMarketName} is predicted as ${prediction}, while the canonical selling guidance remains ${canonicalDecisionText}.`,
     prediction_strength: predictionStrength,
     why_this_matters:
       weatherMessages?.whyThisMatters ||
-      `${nearestMarketName} affects practical selling cost for farmers in ${district}, while ${bestMarketName} may show a different earning opportunity for ${crop}.`,
+      `${primaryMappedMarketName} and ${bestMarketName} are mapped markets available for comparison for farmers in ${farmerDistrict}.`,
     suggested_action:
       weatherMessages?.suggestedAction || suggestedAction,
   };
@@ -224,7 +234,7 @@ const withTimeout = (promise, timeoutMs) =>
 
 const buildPrompt = ({
   input,
-  nearestMarket,
+  primaryMappedMarket,
   bestPredictedMarket,
   recommendedMarket,
   actionDecision,
@@ -235,35 +245,44 @@ const buildPrompt = ({
   probabilityDelta,
   weatherContext,
 }) => {
-  const nearestCurrentEarnings = getEstimatedCurrentEarnings(nearestMarket);
+  const primaryMappedCurrentEarnings =
+    getEstimatedCurrentEarnings(primaryMappedMarket);
   const bestCurrentEarnings = getEstimatedCurrentEarnings(bestPredictedMarket);
-  const nearestFutureEarnings = getEstimatedFutureEarnings(nearestMarket);
+  const primaryMappedFutureEarnings =
+    getEstimatedFutureEarnings(primaryMappedMarket);
   const bestFutureEarnings = getEstimatedFutureEarnings(bestPredictedMarket);
-  const nearestComparisonValue = getComparisonValue(nearestMarket);
+  const primaryMappedComparisonValue = getComparisonValue(primaryMappedMarket);
   const bestComparisonValue = getComparisonValue(bestPredictedMarket);
   const marketDifference =
-    Number.isFinite(bestComparisonValue) && Number.isFinite(nearestComparisonValue)
-      ? bestComparisonValue - nearestComparisonValue
+    Number.isFinite(bestComparisonValue) &&
+    Number.isFinite(primaryMappedComparisonValue)
+      ? bestComparisonValue - primaryMappedComparisonValue
       : null;
   const insightContext = {
     crop: input?.crop,
-    farmer_district: input?.district,
+    farmer_district: input?.farmer_district || input?.district,
     prediction_horizon: input?.horizon,
     canonical_action_decision:
       actionDecision || recommendedMarket?.action_decision || "UNCERTAIN",
-    learned_model_action_authorized: false,
+    canonical_action_authorized: ["WAIT", "SELL_NOW"].includes(
+      String(
+        actionDecision || recommendedMarket?.action_decision || "UNCERTAIN"
+      ).toUpperCase()
+    ),
+    market_comparison_model_action_authorized: false,
     weather_context: weatherContext || null,
-    nearest_market: {
-      ...nearestMarket,
-      estimated_current_earnings: nearestCurrentEarnings,
-      estimated_future_earnings: nearestFutureEarnings,
+    primary_mapped_market: {
+      ...primaryMappedMarket,
+      estimated_current_earnings: primaryMappedCurrentEarnings,
+      estimated_future_earnings: primaryMappedFutureEarnings,
     },
     best_predicted_market: {
       ...bestPredictedMarket,
       estimated_current_earnings: bestCurrentEarnings,
       estimated_future_earnings: bestFutureEarnings,
     },
-    difference_between_nearest_and_best_predicted_market: marketDifference,
+    difference_between_primary_mapped_and_best_predicted_market:
+      marketDifference,
     comparison_strength: comparisonStrength,
     comparison_note: comparisonNote,
     is_close_call: isCloseCall,
@@ -306,7 +325,7 @@ Do NOT include:
 2. Always mention:
 - crop name
 - farmer district
-- nearest market name
+- primary mapped market name
 - alternative or best predicted market name
 
 3. Use qualitative language only:
@@ -317,8 +336,6 @@ Do NOT include:
 - small difference
 - weak confidence
 - moderate confidence
-- transport cost
-- selling cost
 - market conditions
 
 4. Never guarantee future prices or profit.
@@ -331,14 +348,14 @@ Use words like:
 
 5. Do NOT say "best price" unless that market has the highest estimated earnings.
 
-6. If the nearest market has higher estimated earning:
-- Say the nearest market is the more practical option.
+6. If the primary mapped market has higher estimated earning:
+- Say the primary mapped market is the policy-preferred available mapped option.
 - Mention the alternative market only as having a possible trend signal if relevant.
-- Mention that the nearest market may reduce transport cost, selling cost, and risk.
+- Do not infer distance, transport cost, or transport risk from mapping order.
 
 7. If the best predicted market has higher estimated earning:
 - Say the best predicted market may offer a better opportunity.
-- Still mention the farmer should consider transport and selling costs.
+- Still mention the farmer should verify actual logistics and buyer conditions.
 
 8. If the best predicted market has lower estimated earning:
 - Say it may have a stronger trend signal, but lower estimated earning.
@@ -346,7 +363,7 @@ Use words like:
 
 9. If market probabilities or estimated earnings are very close:
 - Clearly say the difference is small.
-- Recommend the nearest market as the safer or more practical choice.
+- Keep the primary mapped market as the policy-preferred mapped option.
 
 10. If confidence is weak:
 - Clearly say the result should be treated as guidance, not a firm decision.
@@ -383,11 +400,18 @@ No markdown.
 No bullet points outside JSON.
 No extra explanation.
 
-20. The canonical action decision is authoritative.
-- Never turn UNCERTAIN into WAIT or SELL_NOW.
-- The learned model is experimental and must not be presented as action-authorized.
-- Do not tell the farmer to wait or sell now when the canonical action is UNCERTAIN.
-- Keep the nearest mapped market as the practical default; do not redirect the farmer using the experimental model.
+20. The canonical price action decision is authoritative.
+- Never change canonical_action_decision or independently derive another selling action.
+- When it is WAIT, you may explain waiting but must not recommend SELL_NOW.
+- When it is SELL_NOW, you may explain selling now but must not recommend WAIT, holding, or delaying the sale.
+- When it is UNCERTAIN, do not tell the farmer to wait or sell now.
+- The market-comparison classifier is experimental comparison evidence and is not action-authorized.
+- Keep the primary mapped market as the policy-preferred mapped option; do not redirect the farmer using the experimental model.
+
+21. Candidate-market order is a backend policy mapping, not geographic evidence.
+- Never call a mapped market nearest, closest, or nearby.
+- Never claim or imply lower transport cost, transport savings, or lower transport risk.
+- Use neutral wording such as "available mapped market" or "market available for comparison".
 
 WEATHER RULES:
 
@@ -429,12 +453,12 @@ const generateGroqInsights = async (recommendationData) => {
 
   try {
     const groq = new Groq({ apiKey });
-    const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+    const model = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
     const completion = await withTimeout(
       groq.chat.completions.create({
         model,
         temperature: 0.2,
-        max_tokens: 500,
+        max_tokens: 2000,
         response_format: { type: "json_object" },
         messages: [
           {

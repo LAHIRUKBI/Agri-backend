@@ -4,11 +4,22 @@ const ACTION_DECISIONS = Object.freeze({
   UNCERTAIN: "UNCERTAIN",
 });
 
-const ACTION_POLICY = "persistence_primary_v1";
-const SMALL_MODEL_DIFFERENCE_PCT = 0.02;
+const ACTION_POLICY = "rs5_price_direction_v1";
+const MIN_ACTIONABLE_PRICE_DIFFERENCE_RS = 5;
+// Currency values remain unrounded. This epsilon only absorbs binary
+// floating-point noise at the exact +/- Rs.5/kg decision boundaries.
+const PRICE_DIFFERENCE_EPSILON_RS = 1e-9;
 
 const toFiniteNumber = (value) => {
-  if (value == null || value === "") return null;
+  if (
+    value == null ||
+    typeof value === "boolean" ||
+    (typeof value === "string" && value.trim() === "") ||
+    !["number", "string"].includes(typeof value)
+  ) {
+    return null;
+  }
+
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -22,79 +33,112 @@ const getModelDirection = (predictedPrice, currentPrice) => {
     return "UNAVAILABLE";
   }
 
-  const differenceRatio = (predictedPrice - currentPrice) / currentPrice;
-  if (Math.abs(differenceRatio) < SMALL_MODEL_DIFFERENCE_PCT) return "STABLE";
-  return differenceRatio > 0 ? "UP" : "DOWN";
+  const differenceRs = predictedPrice - currentPrice;
+  if (
+    differenceRs >=
+    MIN_ACTIONABLE_PRICE_DIFFERENCE_RS - PRICE_DIFFERENCE_EPSILON_RS
+  ) {
+    return "UP";
+  }
+  if (
+    differenceRs <=
+    -MIN_ACTIONABLE_PRICE_DIFFERENCE_RS + PRICE_DIFFERENCE_EPSILON_RS
+  ) {
+    return "DOWN";
+  }
+  return "STABLE";
 };
 
 const buildPriceRecommendationDecision = ({
   currentPrice,
   predictedPrice,
-  classifierPrediction,
-  upProbability,
-  downProbability,
-  contextQuality,
 }) => {
   const safeCurrentPrice = toFiniteNumber(currentPrice);
   const safePredictedPrice = toFiniteNumber(predictedPrice);
-  const safeUpProbability = toFiniteNumber(upProbability);
-  const safeDownProbability = toFiniteNumber(downProbability);
-  const normalizedClassifierPrediction = String(
-    classifierPrediction || ""
-  ).toUpperCase();
+  const currentPriceAvailable = safeCurrentPrice != null && safeCurrentPrice > 0;
+  const predictedPriceAvailable = safePredictedPrice != null;
   const modelDirection = getModelDirection(
     safePredictedPrice,
     safeCurrentPrice
   );
   const reasonCodes = [];
 
-  if (safeCurrentPrice == null || safeCurrentPrice <= 0) {
+  if (!currentPriceAvailable) {
     reasonCodes.push("CURRENT_PRICE_UNAVAILABLE");
   }
 
-  if (safePredictedPrice == null) {
+  if (!predictedPriceAvailable) {
     reasonCodes.push("MODEL_ESTIMATE_UNAVAILABLE");
   }
 
-  if (modelDirection === "STABLE") {
-    reasonCodes.push("MODEL_DIFFERENCE_SMALL");
+  const baseDecision = {
+    action_policy: ACTION_POLICY,
+    persistence_next_price_rs_kg: currentPriceAvailable
+      ? safeCurrentPrice
+      : null,
+    model_implied_direction: modelDirection,
+    model_estimate_experimental: true,
+  };
+
+  if (!currentPriceAvailable || !predictedPriceAvailable) {
+    return {
+      ...baseDecision,
+      action_decision: ACTION_DECISIONS.UNCERTAIN,
+      action_authorized: false,
+      action_decision_message:
+        "Selling guidance is uncertain because the current price or predicted next-period price is unavailable.",
+      action_reason_codes: reasonCodes,
+    };
+  }
+
+  const priceDifferenceRs = safePredictedPrice - safeCurrentPrice;
+
+  if (
+    priceDifferenceRs >=
+    MIN_ACTIONABLE_PRICE_DIFFERENCE_RS - PRICE_DIFFERENCE_EPSILON_RS
+  ) {
+    return {
+      ...baseDecision,
+      action_decision: ACTION_DECISIONS.WAIT,
+      action_authorized: true,
+      action_decision_message:
+        "The predicted next-period price is at least Rs.5/kg higher than the current selling price, so waiting may improve the selling price.",
+      action_reason_codes: [
+        "PREDICTED_PRICE_INCREASE_AT_LEAST_RS5",
+      ],
+    };
   }
 
   if (
-    ["UP", "DOWN"].includes(modelDirection) &&
-    ["UP", "DOWN"].includes(normalizedClassifierPrediction) &&
-    modelDirection !== normalizedClassifierPrediction
+    priceDifferenceRs <=
+    -MIN_ACTIONABLE_PRICE_DIFFERENCE_RS + PRICE_DIFFERENCE_EPSILON_RS
   ) {
-    reasonCodes.push("MODEL_SIGNAL_CONFLICT");
+    return {
+      ...baseDecision,
+      action_decision: ACTION_DECISIONS.SELL_NOW,
+      action_authorized: true,
+      action_decision_message:
+        "The predicted next-period price is at least Rs.5/kg lower than the current selling price, so selling now may avoid the expected decline.",
+      action_reason_codes: [
+        "PREDICTED_PRICE_DECREASE_AT_LEAST_RS5",
+      ],
+    };
   }
-
-  if (safeUpProbability == null || safeDownProbability == null) {
-    reasonCodes.push("MODEL_CONFIDENCE_INSUFFICIENT");
-  }
-
-  if (contextQuality && contextQuality !== "complete") {
-    reasonCodes.push("MODEL_CONTEXT_INCOMPLETE");
-  }
-
-  reasonCodes.push("PERSISTENCE_NO_DIRECTIONAL_EDGE");
-  reasonCodes.push("MODEL_NOT_ACTION_AUTHORIZED");
 
   return {
+    ...baseDecision,
     action_decision: ACTION_DECISIONS.UNCERTAIN,
-    action_policy: ACTION_POLICY,
     action_authorized: false,
     action_decision_message:
-      "Timing advantage is uncertain. Compare current buyer offers, transport costs, and storage or spoilage risk before selling.",
-    action_reason_codes: [...new Set(reasonCodes)],
-    persistence_next_price_rs_kg: safeCurrentPrice,
-    model_implied_direction: modelDirection,
-    model_estimate_experimental: true,
+      "The predicted next-period price differs from the current selling price by less than Rs.5/kg, so the timing advantage is uncertain.",
+    action_reason_codes: ["PRICE_DIFFERENCE_BELOW_RS5_THRESHOLD"],
   };
 };
 
 module.exports = {
   ACTION_DECISIONS,
   ACTION_POLICY,
-  SMALL_MODEL_DIFFERENCE_PCT,
+  MIN_ACTIONABLE_PRICE_DIFFERENCE_RS,
+  PRICE_DIFFERENCE_EPSILON_RS,
   buildPriceRecommendationDecision,
 };

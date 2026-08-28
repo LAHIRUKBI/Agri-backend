@@ -11,6 +11,7 @@ const guidanceRoutes = require('./src/routes/guidanceRoutes');
 const nutrientRoutes = require('./src/routes/nutrientRoutes');
 const predictionRoutes = require("./src/routes/predictionRoutes");
 const marketRecommendationRoutes = require("./src/routes/marketRecommendationRoutes");
+const notificationRoutes = require("./src/routes/notificationRoutes");
 
 const app = express();
 
@@ -34,6 +35,7 @@ app.use('/api/guidance', guidanceRoutes);
 app.use('/api/nutrients', nutrientRoutes);
 app.use("/api", predictionRoutes);
 app.use("/api", marketRecommendationRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 
 // 404 handler - This must come AFTER all other routes

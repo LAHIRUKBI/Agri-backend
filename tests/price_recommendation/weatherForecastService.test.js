@@ -20,14 +20,22 @@ const dates = [
   "2026-08-29",
 ];
 
-const responseFor = (precipitation, probabilities = [10, 20, 30, 40, 50, 40, 30]) => ({
+const responseFor = (
+  precipitation,
+  probabilities = [10, 20, 30, 40, 50, 40, 30],
+  dailyOverrides = {}
+) => ({
   data: {
     daily: {
       time: dates,
+      weather_code: [0, 1, 2, 3, 45, 61, 95],
+      temperature_2m_max: [30.1, 29.8, 29.4, 28.9, 28.5, 27.7, 28.2],
+      temperature_2m_min: [24.1, 23.9, 23.7, 23.5, 23.2, 22.8, 23],
       precipitation_sum: precipitation,
       ...(probabilities == null
         ? {}
         : { precipitation_probability_max: probabilities }),
+      ...dailyOverrides,
     },
   },
 });
@@ -68,6 +76,19 @@ test("valid response calculates total, average, rainy days, and request paramete
       max_rain_probability: 50,
       rainfall_risk: "MODERATE",
       source: "open_meteo",
+      weather_forecast: {
+        location: "Nuwara Eliya",
+        period: "next_7_days",
+        source: "open_meteo",
+        days: dates.map((date, index) => ({
+          date,
+          weather_code: [0, 1, 2, 3, 45, 61, 95][index],
+          temperature_max_c: [30.1, 29.8, 29.4, 28.9, 28.5, 27.7, 28.2][index],
+          temperature_min_c: [24.1, 23.9, 23.7, 23.5, 23.2, 22.8, 23][index],
+          rain_probability: [10, 20, 30, 40, 50, 40, 30][index],
+          rainfall_mm: [0, 0.5, 1, 2, 3, 4, 5][index],
+        })),
+      },
     });
     assert.equal(RAINY_DAY_THRESHOLD_MM, 1);
     assert.equal(request.url, "https://api.open-meteo.com/v1/forecast");
@@ -78,9 +99,38 @@ test("valid response calculates total, average, rainy days, and request paramete
     assert.equal(request.options.params.timezone, "Asia/Colombo");
     assert.equal(
       request.options.params.daily,
-      "precipitation_sum,precipitation_probability_max"
+      "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum"
     );
   });
+});
+
+test("daily forecast returns up to seven complete Open-Meteo days without fabrication", async () => {
+  await withAxiosGet(
+    async () =>
+      responseFor(
+        [0, 1, 2, 3, 4, 5, 6],
+        [10, 20, 30, 40, 50, 60, 70],
+        {
+          time: dates,
+          weather_code: [0, 1, 2, null, 45, 61, 95],
+          temperature_2m_max: [30, 30, 29, 29, 28, 28, 27],
+          temperature_2m_min: [24, 24, 23, 23, 22, 22, 21],
+          precipitation_probability_max: [10, 20, 30, 40, 50, 60, 70],
+          precipitation_sum: [0, 1, 2, 3, 4, 5, 6],
+        }
+      ),
+    async () => {
+      const context = await getSevenDayRainfallContext("kurunegala");
+
+      assert.equal(context.weather_forecast.location, "Kurunegala");
+      assert.equal(context.weather_forecast.days.length, 6);
+      assert.deepEqual(
+        context.weather_forecast.days.map((day) => day.date),
+        dates.filter((_, index) => index !== 3)
+      );
+      assert.ok(context.weather_forecast.days.length <= 7);
+    }
+  );
 });
 
 test("HIGH boundary is inclusive", async () => {

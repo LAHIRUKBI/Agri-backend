@@ -1,4 +1,6 @@
-const districtMarketMap = {
+// Authoritative farmer administrative district -> candidate market mapping.
+// Market/town names must not be added as farmer-district aliases here.
+const districtMarketMap = Object.freeze({
   colombo: ["meegoda", "kandy"],
   gampaha: ["meegoda", "kandy"],
   kalutara: ["meegoda", "kandy"],
@@ -16,10 +18,6 @@ const districtMarketMap = {
   badulla: ["nuwaraeliya", "bandarawela"],
   kegalle: ["kandy", "meegoda"],
   ratnapura: ["meegoda", "kandy"],
-
-  dambulla: ["dambulla", "kandy"],
-  meegoda: ["meegoda", "kandy"],
-  nuwaraeliya: ["nuwaraeliya", "kandy"],
-};
+});
 
 module.exports = districtMarketMap;

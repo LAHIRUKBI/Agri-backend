@@ -4,6 +4,13 @@ const OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
 const OPEN_METEO_TIMEOUT_MS = 3000;
 const FORECAST_DAYS = 7;
 const RAINY_DAY_THRESHOLD_MM = 1.0;
+const DAILY_FORECAST_VARIABLES = Object.freeze([
+  "weather_code",
+  "temperature_2m_max",
+  "temperature_2m_min",
+  "precipitation_probability_max",
+  "precipitation_sum",
+]);
 
 const RAINFALL_RISK_THRESHOLDS = Object.freeze({
   highTotalRainfallMm: 70,
@@ -51,6 +58,64 @@ const normalizeLocationName = (locationName) => {
 };
 
 const roundSummaryNumber = (value) => Number(value.toFixed(2));
+
+const formatLocationName = (locationName) =>
+  locationName.replace(/\b\w/g, (character) => character.toUpperCase());
+
+const isFiniteNumber = (value) =>
+  typeof value === "number" && Number.isFinite(value);
+
+const buildDailyForecast = (daily) => {
+  const times = daily?.time;
+  const weatherCodes = daily?.weather_code;
+  const maximumTemperatures = daily?.temperature_2m_max;
+  const minimumTemperatures = daily?.temperature_2m_min;
+  const rainProbabilities = daily?.precipitation_probability_max;
+  const rainfallTotals = daily?.precipitation_sum;
+
+  if (!Array.isArray(times)) {
+    return [];
+  }
+
+  const days = [];
+  const availableDayCount = Math.min(times.length, FORECAST_DAYS);
+
+  for (let index = 0; index < availableDayCount; index += 1) {
+    const date = times[index];
+    const weatherCode = weatherCodes?.[index];
+    const maximumTemperature = maximumTemperatures?.[index];
+    const minimumTemperature = minimumTemperatures?.[index];
+    const rainProbability = rainProbabilities?.[index];
+    const rainfall = rainfallTotals?.[index];
+
+    const hasCompleteRealDay =
+      typeof date === "string" &&
+      date.length > 0 &&
+      isFiniteNumber(weatherCode) &&
+      isFiniteNumber(maximumTemperature) &&
+      isFiniteNumber(minimumTemperature) &&
+      isFiniteNumber(rainProbability) &&
+      rainProbability >= 0 &&
+      rainProbability <= 100 &&
+      isFiniteNumber(rainfall) &&
+      rainfall >= 0;
+
+    if (!hasCompleteRealDay) {
+      continue;
+    }
+
+    days.push({
+      date,
+      weather_code: weatherCode,
+      temperature_max_c: maximumTemperature,
+      temperature_min_c: minimumTemperature,
+      rain_probability: rainProbability,
+      rainfall_mm: rainfall,
+    });
+  }
+
+  return days;
+};
 
 const classifyRainfallRisk = ({
   totalRainfallMm,
@@ -149,6 +214,12 @@ const buildRainfallContext = (locationName, responseData) => {
       maxRainProbability == null ? null : roundSummaryNumber(maxRainProbability),
     rainfall_risk: rainfallRisk,
     source: "open_meteo",
+    weather_forecast: {
+      location: formatLocationName(locationName),
+      period: "next_7_days",
+      source: "open_meteo",
+      days: buildDailyForecast(daily),
+    },
   };
 };
 
@@ -165,7 +236,7 @@ const getSevenDayRainfallContext = async (locationName) => {
       params: {
         latitude: coordinates.latitude,
         longitude: coordinates.longitude,
-        daily: "precipitation_sum,precipitation_probability_max",
+        daily: DAILY_FORECAST_VARIABLES.join(","),
         forecast_days: FORECAST_DAYS,
         past_days: 0,
         timezone: "Asia/Colombo",
