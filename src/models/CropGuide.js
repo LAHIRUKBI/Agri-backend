@@ -2,10 +2,10 @@
 const mongoose = require('mongoose');
 
 const stepSchema = new mongoose.Schema({
-  stage: String, // e.g., "Land Preparation", "Seed Selection"
+  stage: String, // e.g. "Land Preparation", "Seed Selection"
   instructions: String,
-  estimatedDays: Number, // Useful for the Visual Planning Timeline
-  alert: String // Stage-Based Alert System (Novelty 3)
+  estimatedDays: Number,
+  alert: String 
 });
 
 const cropRecommendationSchema = new mongoose.Schema({

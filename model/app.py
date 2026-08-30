@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from sklearn.preprocessing import OneHotEncoder, MultiLabelBinarizer
 from sklearn.ensemble import RandomForestClassifier
 
-from nutrient_manager import get_or_create_nutrients   # only for crop NPK requirements
+from nutrient_manager import get_or_create_nutrients  
 
 PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PARENT_DIR not in sys.path:
@@ -42,7 +42,7 @@ soil_image_pipeline = SoilImagePipeline(MODEL_DIR, DATA_DIR)
 # ---------- Global ML models ----------
 npk_model = None
 npk_scaler = None
-agro_df = None               # loaded once at startup
+agro_df = None     
 crop_rec_model = None
 crop_rec_encoder = None
 crop_rec_mlb = None
@@ -63,7 +63,7 @@ def load_npk_predictor():
         print("⚠️ NPK predictor model not found. Falling back to deterministic calculation.")
         return False
 
-# ---------- Load Agrochemical Data (once) ----------
+# ---------- Load Agrochemical Data ----------
 def load_agrochemical_data():
     global agro_df
     agro_path = os.path.join(DATA_DIR, "Agrochemical_compounds.csv")
@@ -133,7 +133,7 @@ def deterministic_calculate_current_npk(baseline, past_crops):
     current_n = float(baseline.get('N', 50.0))
     current_p = float(baseline.get('P', 20.0))
     current_k = float(baseline.get('K', 100.0))
-    chemical_breakdown = [] # Add this array
+    chemical_breakdown = []
 
     months_map = {'January':1, 'February':2, 'March':3, 'April':4, 'May':5, 'June':6,
                   'July':7, 'August':8, 'September':9, 'October':10, 'November':11, 'December':12}
@@ -201,7 +201,7 @@ def deterministic_calculate_current_npk(baseline, past_crops):
 
     return max(0, current_n), max(0, current_p), max(0, current_k), chemical_breakdown
 
-# ---------- ML‑based NPK Prediction (preferred) ----------
+# ---------- ML‑based NPK Prediction ----------
 def calculate_current_npk(baseline, past_crops):
     global npk_model, npk_scaler, agro_df
     
@@ -213,7 +213,7 @@ def calculate_current_npk(baseline, past_crops):
     total_p_added = 0.0
     total_k_added = 0.0
     total_months = 0
-    chemical_breakdown = [] # Add this array
+    chemical_breakdown = []
     
     months_map = {'January':1, 'February':2, 'March':3, 'April':4, 'May':5, 'June':6,
                   'July':7, 'August':8, 'September':9, 'October':10, 'November':11, 'December':12}
@@ -410,7 +410,7 @@ async def soil_image_assess(req: SoilImageAssessmentRequest):
 
 @app.get("/get_requirements/{crop_name}")
 async def get_requirements(crop_name: str):
-    # Target Crop එකට අදාල දත්ත CSV හෝ AI මගින් ලබා දීම
+    # Providing data related to the target crop via CSV or AI
     target_requirements = get_or_create_nutrients(crop_name)
     if not target_requirements:
         return {"error": "Failed to determine crop requirements."}
