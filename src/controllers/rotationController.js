@@ -17,7 +17,7 @@ exports.getRotationPlan = async (req, res) => {
       return res.status(400).json({ error: 'Please provide at least one past crop.' });
     }
 
-    // 1. Baseline N-P-K ලබා ගැනීම
+    // 1. Baseline N-P-K
     let baseConfig = await SoilConfig.findOne() || { nutrients: [{symbol:'N', min:50}, {symbol:'P', min:20}, {symbol:'K', min:100}] };
     const baselineNutrients = {
         N: baseConfig.nutrients.find(n => n.symbol === 'N')?.min || 50,
@@ -25,7 +25,7 @@ exports.getRotationPlan = async (req, res) => {
         K: baseConfig.nutrients.find(n => n.symbol === 'K')?.min || 100
     };
 
-    // 2. Python ML Model එකෙන් වත්මන් N-P-K ලබා ගැනීම (පියවර 1)
+    // 2. Getting Current N-P-K from Python ML Model (Step 1)
     const pythonPredictRes = await fetch('http://localhost:8000/predict_npk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -33,14 +33,14 @@ exports.getRotationPlan = async (req, res) => {
     });
     const predictedSoil = await pythonPredictRes.json();
 
-    // 3. Python එකෙන් Target Crop හි Standard N-P-K ලබා ගැනීම 
+    // 3. Obtaining Standard N-P-K of Target Crop from Python 
     const pythonReqRes = await fetch(`http://localhost:8000/get_requirements/${targetCrop}`);
     const targetRequirements = await pythonReqRes.json();
 
-    // 4. nutrientCalculator හරහා Gap Analysis සිදු කිරීම (පියවර 2)
+    // 4. Performing Gap Analysis via Nutrient Calculator (Step 2)
     const gapAnalysis = calculateGapAndSuitability(predictedSoil, targetRequirements);
 
-    // 5. AI හරහා Remedies සහ Alternatives ලබා ගැනීම (පියවර 3)
+    // 5. Getting Remedies and Alternatives through AI (Step 3)
     let aiSoilRemedy = "Soil is well-suited for this crop! Maintain current nutrient levels.";
     let alternativeSuggestions = [];
 
@@ -59,7 +59,7 @@ exports.getRotationPlan = async (req, res) => {
       alternativeSuggestions = JSON.parse(cleanText);
     }
 
-    // 6. Frontend එකට යැවීමට Data Format කිරීම
+    // 6. Formatting data to send to the frontend
     const finalData = {
       targetEvaluation: {
         isSuitable: gapAnalysis.isSuitable,
@@ -72,7 +72,6 @@ exports.getRotationPlan = async (req, res) => {
         { nutrient: "Potassium (K)", level: `${predictedSoil.current_k.toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.K, difference: parseFloat(gapAnalysis.differences.diffK.toFixed(2)),targetMin: gapAnalysis.requirements.K.min,targetMax: gapAnalysis.requirements.K.max }
       ],
       alternativeSuggestions,
-      // අලුතින් එකතු කල දත්ත 
       chemicalBreakdown: predictedSoil.chemical_breakdown || [],
       calculatorDetails: {
           requirements: gapAnalysis.requirements,
