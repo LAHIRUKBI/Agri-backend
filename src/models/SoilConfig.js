@@ -1,4 +1,4 @@
-// backend/src/models/SoilConfig.js
+// backend/srcල්
 const mongoose = require('mongoose');
 
 const nutrientSchema = new mongoose.Schema({
