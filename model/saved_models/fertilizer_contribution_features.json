@@ -1,0 +1,21 @@
+{
+  "feature_names": [
+    "fertilizer::Ammonium Sulfate (SOA)",
+    "fertilizer::Compost / Organic",
+    "fertilizer::Dolomite",
+    "fertilizer::Eppawala Rock Phosphate (ERP)",
+    "fertilizer::MOP (Muriate of Potash)",
+    "fertilizer::NPK 12-12-17",
+    "fertilizer::NPK 15-15-15",
+    "fertilizer::TSP (Triple Super Phosphate)",
+    "fertilizer::Urea"
+  ],
+  "output_names": [
+    "N_added_g_per_sqft",
+    "P_added_g_per_sqft",
+    "K_added_g_per_sqft"
+  ],
+  "output_unit": "g/sq.ft",
+  "target_source": "synthetic fertilizer-history calculations",
+  "real_soil_measurements_used": false
+}

@@ -21,6 +21,11 @@ if PARENT_DIR not in sys.path:
 
 from algorithms.soil_image_pipeline import SoilImagePipeline
 
+from fertilizer_contribution_service import (
+    load_contribution_model,
+    calculate_fertilizer_contribution,
+)
+
 load_dotenv()
 app = FastAPI()
 
@@ -38,6 +43,12 @@ DATA_DIR = os.path.join(CURRENT_DIR, "data")
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 soil_image_pipeline = SoilImagePipeline(MODEL_DIR, DATA_DIR)
+
+try:
+    contribution_model, contribution_scaler, contribution_features = load_contribution_model(MODEL_DIR)
+except Exception as exc:
+    print(f"WARNING: contribution model not loaded: {exc}")
+    contribution_model = contribution_scaler = contribution_features = None
 
 # ---------- Global ML models ----------
 npk_model = None
@@ -202,72 +213,41 @@ def deterministic_calculate_current_npk(baseline, past_crops):
     return max(0, current_n), max(0, current_p), max(0, current_k), chemical_breakdown
 
 # ---------- ML‑based NPK Prediction ----------
-def calculate_current_npk(baseline, past_crops):
-    global npk_model, npk_scaler, agro_df
-    
-    if npk_model is None or npk_scaler is None or agro_df is None:
-        print("[WARN] ML model or agro data missing, using deterministic fallback.")
-        return deterministic_calculate_current_npk(baseline, past_crops)
-    
-    total_n_added = 0.0
-    total_p_added = 0.0
-    total_k_added = 0.0
-    total_months = 0
-    chemical_breakdown = []
-    
-    months_map = {'January':1, 'February':2, 'March':3, 'April':4, 'May':5, 'June':6,
-                  'July':7, 'August':8, 'September':9, 'October':10, 'November':11, 'December':12}
-    
-    for crop in past_crops:
-        try:
-            duration = (int(crop.endYear) - int(crop.startYear)) * 12 + (months_map[crop.endMonth] - months_map[crop.startMonth])
-            duration = max(1, duration)
-        except:
-            duration = 3
-        land = float(crop.landSize) if float(crop.landSize) > 0 else 1.0
-        total_months += duration
-        
-        for chem in crop.fertilizers + crop.pesticides:
-            if chem.name in agro_df.index:
-                n_val = agro_df.loc[chem.name, 'N']
-                p_val = agro_df.loc[chem.name, 'P']
-                k_val = agro_df.loc[chem.name, 'K']
-                if isinstance(n_val, pd.Series): n_val = n_val.iloc[0]
-                if isinstance(p_val, pd.Series): p_val = p_val.iloc[0]
-                if isinstance(k_val, pd.Series): k_val = k_val.iloc[0]
-                
-                multiplier = chem.amount_g / 100.0
-                added_n = (n_val * multiplier) / land
-                added_p = (p_val * multiplier) / land
-                added_k = (k_val * multiplier) / land
-                
-                total_n_added += added_n
-                total_p_added += added_p
-                total_k_added += added_k
-                
-                # Store breakdown for UI
-                chemical_breakdown.append({
-                    "name": chem.name,
-                    "amount_g": chem.amount_g,
-                    "base_100g": {"N": float(n_val), "P": float(p_val), "K": float(k_val)},
-                    "added": {"N": float(added_n), "P": float(added_p), "K": float(added_k)}
-                })
-    
-    base_n = baseline.get('N', 50.0)
-    base_p = baseline.get('P', 20.0)
-    base_k = baseline.get('K', 100.0)
-    
-    features = np.array([[base_n, base_p, base_k, total_n_added, total_p_added, total_k_added, total_months]])
-    features_scaled = npk_scaler.transform(features)
-    pred = npk_model.predict(features_scaled)[0]
-    current_n, current_p, current_k = max(0, pred[0]), max(0, pred[1]), max(0, pred[2])
-    if total_n_added == 0:
-        current_n = max(0, base_n - (total_months * 1.2))
-    if total_p_added == 0:
-        current_p = max(0, base_p - (total_months * 0.4))
-    if total_k_added == 0:
-        current_k = max(0, base_k - (total_months * 0.8))
-    return current_n, current_p, current_k, chemical_breakdown
+
+def calculate_current_npk(sensor_readings, past_crops):
+    """
+    sensor_readings: N, P, K values in ppm.
+    Fertilizer contribution is calculated separately in g/sq.ft.
+    These values must not be added directly to soil ppm readings.
+    """
+    required = ("N", "P", "K")
+    sensor = {}
+
+    for symbol in required:
+        if symbol not in sensor_readings:
+            raise ValueError(
+                f"Missing soil nutrient reading for {symbol}"
+            )
+
+        value = float(sensor_readings[symbol])
+
+        if not np.isfinite(value) or value < 0:
+            raise ValueError(
+                f"Invalid soil nutrient reading for {symbol}: {value}"
+            )
+
+        sensor[symbol] = value
+
+    contribution = calculate_fertilizer_contribution(
+        previous_crops=past_crops,
+        agro_df=agro_df,
+        model=contribution_model,
+        scaler=contribution_scaler,
+        feature_names=contribution_features,
+    )
+
+    return sensor, contribution
+
 
 # ---------- Rule‑based Suitability Check ----------
 def is_crop_suitable(current_n, current_p, current_k, requirements):
@@ -331,13 +311,26 @@ soil_image_pipeline.load_soil_type_nutrient_dataset()
 # ---------- Endpoints ----------
 @app.post("/predict_npk")
 async def predict_npk(req: RotationRequest):
-    # Unpack the 4 values
-    current_n, current_p, current_k, chemical_breakdown = calculate_current_npk(req.baselineNutrients, req.previousCrops)
+    # IMPORTANT: req.baselineNutrients must contain live IoT readings,
+    # not SoilNutrientsPage min/max limits or fallback constants.
+    sensor, contribution = calculate_current_npk(
+        req.baselineNutrients,
+        req.previousCrops,
+    )
     return {
-        "current_n": float(current_n),
-        "current_p": float(current_p),
-        "current_k": float(current_k),
-        "chemical_breakdown": chemical_breakdown # Send to Node JS
+        "current_n": sensor["N"],
+        "current_p": sensor["P"],
+        "current_k": sensor["K"],
+        "current_soil_unit": "ppm",
+        "fertilizer_contribution": {
+            "N_g_per_sqft": contribution["added_n_g_per_sqft"],
+            "P_g_per_sqft": contribution["added_p_g_per_sqft"],
+            "K_g_per_sqft": contribution["added_k_g_per_sqft"],
+            "unit": contribution["unit"],
+            "source": contribution["source"],
+        },
+        "chemical_breakdown": contribution["chemical_breakdown"],
+        "warnings": contribution["warnings"],
     }
 
 @app.post("/soil_image_assess")
