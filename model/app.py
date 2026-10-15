@@ -7,6 +7,7 @@ import pickle
 import os
 import sys
 import numpy as np
+import json
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from dotenv import load_dotenv
