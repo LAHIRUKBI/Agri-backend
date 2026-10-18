@@ -1,2 +1,13 @@
 node_modules
 .env
+
+# Python runtime artifacts
+__pycache__/
+*.pyc
+
+# Runtime logs
+backend.out.log
+backend.err.log
+ml.out.log
+ml.err.log
+*.log

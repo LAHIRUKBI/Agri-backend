@@ -490,3 +490,8 @@ async def get_crop_steps(crop_name: str, language: str = "English"):
     except Exception as e:
         print(f"AI Error: {e}")
         return {"success": False, "message": "Failed to generate steps via AI."}
+
+# ---------- Market Intelligence API ----------
+from ml.inference.app import app as market_app
+
+app.mount("/market", market_app)
