@@ -1,7 +1,4 @@
 // backend/src/controllers/rotationController.js
-// Corrected integration: SoilNutrientsPage UI remains unchanged.
-// Existing SoilConfig N/P/K min values are used as the admin-entered current values,
-// because this project does not have a separate current-reading field.
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const RotationPlan = require('../models/RotationPlan');
 const SoilConfig = require('../models/SoilConfig');
@@ -17,9 +14,6 @@ function getNpkValuesFromSoilConfig(config) {
     const value = Number(item?.min);
     return Number.isFinite(value) && value >= 0 ? value : fallback;
   };
-  // Keep compatibility with the existing UI/data model: min values are the
-  // values this implementation currently receives from the admin page.
-  // Do not interpret max as a second sensor reading or average min/max.
   return { N: getMin('N', 50), P: getMin('P', 20), K: getMin('K', 100) };
 }
 
@@ -46,7 +40,7 @@ exports.getRotationPlan = async (req, res) => {
       return res.status(400).json({ error: 'Please provide at least one past crop.' });
     }
 
-    // 1. Read the existing admin-entered N/P/K values. SoilNutrientsPage is not changed.
+    // 1. Read the existing admin-entered N/P/K values.
     const baseConfig = await SoilConfig.findOne();
     if (!baseConfig) {
       return res.status(400).json({ error: 'Soil nutrient configuration is missing. Please save it in Soil Nutrients Management.' });
@@ -54,8 +48,6 @@ exports.getRotationPlan = async (req, res) => {
     const baselineNutrients = getNpkValuesFromSoilConfig(baseConfig);
     console.log("[Rotation Plan] Baseline NPK:", baselineNutrients);
 
-    // 2. Calculate historical fertilizer contribution in Python.
-    // Python returns current_n/p/k separately from fertilizer contribution.
     
 const pythonPredictRes = await fetch(
   'http://localhost:8000/predict_npk',
@@ -113,10 +105,8 @@ if (!pythonPredictRes.ok) {
     const targetRequirements = await readJsonResponse(pythonReqRes, 'Crop nutrient requirements service');
 
     // 4. Compare the current configured N/P/K values to crop requirements.
-    // Never add g/sq.ft fertilizer contribution directly to ppm.
     const gapAnalysis = calculateGapAndSuitability(predictedSoil, targetRequirements);
 
-    // 5. Remedies and alternatives via Gemini when needed.
     let aiSoilRemedy = 'Soil nutrient evaluation is complete. Follow the target crop requirements and local agricultural guidance.';
     let alternativeSuggestions = [];
     if (!gapAnalysis.isSuitable && process.env.GEMINI_API_KEY) {
@@ -145,8 +135,6 @@ if (!pythonPredictRes.ok) {
       }
     }
 
-    // Keep the existing response shape for the current frontend. Additional
-    // fertilizerContribution metadata is additive and does not require UI changes.
     const soilNutrientLevels = [
       { nutrient: 'Nitrogen (N)', level: `${Number(predictedSoil.current_n).toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.N, difference: Number(gapAnalysis.differences.diffN.toFixed(2)), targetMin: gapAnalysis.requirements.N.min, targetMax: gapAnalysis.requirements.N.max },
       { nutrient: 'Phosphorus (P)', level: `${Number(predictedSoil.current_p).toFixed(2)} ppm`, depletionPrediction: gapAnalysis.statuses.P, difference: Number(gapAnalysis.differences.diffP.toFixed(2)), targetMin: gapAnalysis.requirements.P.min, targetMax: gapAnalysis.requirements.P.max },
@@ -155,7 +143,6 @@ if (!pythonPredictRes.ok) {
 
     const chemicalBreakdown = (Array.isArray(predictedSoil.chemical_breakdown) ? predictedSoil.chemical_breakdown : []).map((item) => ({
       ...item,
-      // Preserve the legacy frontend field name while exposing the corrected g/sq.ft values.
       added: item.added || item.added_g_per_sqft || { N: 0, P: 0, K: 0 },
     }));
 

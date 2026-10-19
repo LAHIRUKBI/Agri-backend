@@ -72,7 +72,7 @@ def load_npk_predictor():
         print("✅ NPK predictor model loaded.")
         return True
     else:
-        print("⚠️ NPK predictor model not found. Falling back to deterministic calculation.")
+        print("⚠️ NPK predictor model not found.")
         return False
 
 # ---------- Load Agrochemical Data ----------
@@ -80,7 +80,7 @@ def load_agrochemical_data():
     global agro_df
     agro_path = os.path.join(DATA_DIR, "Agrochemical_compounds.csv")
     if not os.path.exists(agro_path):
-        print("⚠️ Agrochemical CSV missing. ML feature extraction will fallback.")
+        print("⚠️ Agrochemical CSV missing.")
         return False
     df = pd.read_csv(agro_path)
     # Find N,P,K columns
@@ -114,7 +114,7 @@ def load_crop_rec_models():
             crop_rec_encoder = pickle.load(f)
         with open(os.path.join(MODEL_DIR, "crop_rec_mlb.pkl"), "rb") as f:
             crop_rec_mlb = pickle.load(f)
-        print("✅ Crop Recommendation ML Models loaded into memory.")
+        print("✅ Crop Recommendation ML Models loaded")
         return True
     except Exception as e:
         return False
@@ -312,8 +312,6 @@ soil_image_pipeline.load_soil_type_nutrient_dataset()
 # ---------- Endpoints ----------
 @app.post("/predict_npk")
 async def predict_npk(req: RotationRequest):
-    # IMPORTANT: req.baselineNutrients must contain live IoT readings,
-    # not SoilNutrientsPage min/max limits or fallback constants.
     sensor, contribution = calculate_current_npk(
         req.baselineNutrients,
         req.previousCrops,
